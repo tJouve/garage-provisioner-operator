@@ -58,7 +58,7 @@ const (
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagebuckets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores,verbs=get;list;watch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop.
@@ -256,10 +256,6 @@ func (r *GarageKeyReconciler) reconcileUpdate(
 	}
 
 	if strings.TrimSpace(keyInfo.SecretAccessKey) == "" && strings.TrimSpace(keyInfo.SecretKey) == "" {
-		existingSecretAccessKey := r.getExistingSecretAccessKey(ctx, key)
-		keyInfo.SecretAccessKey = existingSecretAccessKey
-	}
-	if strings.TrimSpace(keyInfo.SecretAccessKey) == "" && strings.TrimSpace(keyInfo.SecretKey) == "" {
 		err := fmt.Errorf("secret access key unavailable for credentials Secret sync")
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -337,20 +333,6 @@ func (r *GarageKeyReconciler) reconcileDelete(
 		}
 	}
 
-	secretName := computeSecretName(key)
-	if secretName != "" {
-		secret := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{Namespace: key.Namespace, Name: secretName}, secret)
-		if err == nil {
-			if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
-				if statusErr := r.updateKeyStatusCondition(ctx, key, "DeleteFailed", err.Error()); statusErr != nil {
-					return ctrl.Result{}, statusErr
-				}
-				return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
-			}
-		}
-	}
-
 	before := key.DeepCopy()
 	controllerutil.RemoveFinalizer(key, garageKeyFinalizer)
 	if err := r.Patch(ctx, key, client.MergeFrom(before)); err != nil {
@@ -395,12 +377,7 @@ func (r *GarageKeyReconciler) applyCredentialsSecret(
 		return err
 	}
 
-	before := existing.DeepCopy()
-	existing.Type = desired.Type
-	existing.Data = desired.Data
-	existing.OwnerReferences = desired.OwnerReferences
-
-	return r.Patch(ctx, existing, client.MergeFrom(before))
+	return nil
 }
 
 func (r *GarageKeyReconciler) persistAccessKeyID(
@@ -415,20 +392,6 @@ func (r *GarageKeyReconciler) persistAccessKeyID(
 	before := key.DeepCopy()
 	key.Status.AccessKeyID = accessKeyID
 	return r.Status().Patch(ctx, key, client.MergeFrom(before))
-}
-
-func (r *GarageKeyReconciler) getExistingSecretAccessKey(ctx context.Context, key *storagev1alpha1.GarageKey) string {
-	secretName := computeSecretName(key)
-	if strings.TrimSpace(secretName) == "" {
-		return ""
-	}
-
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: key.Namespace, Name: secretName}, secret); err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(string(secret.Data["AWS_SECRET_ACCESS_KEY"]))
 }
 
 func (r *GarageKeyReconciler) resolveStoreReadinessAndURL(
@@ -526,10 +489,6 @@ func (r *GarageKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&storagev1alpha1.GarageBucket{},
 			handler.EnqueueRequestsFromMapFunc(r.mapBucketToKeys),
 		).
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.mapSecretToKeys),
-		).
 		Named("garagekey").
 		Complete(r)
 }
@@ -549,31 +508,6 @@ func (r *GarageKeyReconciler) mapBucketToKeys(ctx context.Context, obj client.Ob
 	for i := range keyList.Items {
 		item := &keyList.Items[i]
 		if item.Spec.BucketRef.Name != bucket.Name {
-			continue
-		}
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{Namespace: item.Namespace, Name: item.Name},
-		})
-	}
-
-	return requests
-}
-
-func (r *GarageKeyReconciler) mapSecretToKeys(ctx context.Context, obj client.Object) []reconcile.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-
-	keyList := &storagev1alpha1.GarageKeyList{}
-	if err := r.List(ctx, keyList, client.InNamespace(secret.Namespace)); err != nil {
-		return nil
-	}
-
-	requests := make([]reconcile.Request, 0)
-	for i := range keyList.Items {
-		item := &keyList.Items[i]
-		if computeSecretName(item) != secret.Name {
 			continue
 		}
 		requests = append(requests, reconcile.Request{

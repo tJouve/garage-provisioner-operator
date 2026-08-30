@@ -22,13 +22,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
 )
@@ -42,7 +39,7 @@ type GarageStoreReconciler struct {
 
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores/status,verbs=update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *GarageStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -99,39 +96,6 @@ func (r *GarageStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&storagev1alpha1.GarageStore{}).
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.mapSecretToStores),
-		).
 		Named("garagestore").
 		Complete(r)
-}
-
-func (r *GarageStoreReconciler) mapSecretToStores(ctx context.Context, obj client.Object) []reconcile.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-
-	storeList := &storagev1alpha1.GarageStoreList{}
-	if err := r.List(ctx, storeList, client.InNamespace(secret.Namespace)); err != nil {
-		return nil
-	}
-
-	requests := make([]reconcile.Request, 0)
-	for i := range storeList.Items {
-		item := &storeList.Items[i]
-		if item.Spec.AdminToken.Name != secret.Name {
-			continue
-		}
-		if item.Spec.AdminToken.Namespace != "" && item.Spec.AdminToken.Namespace != secret.Namespace {
-			continue
-		}
-
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{Namespace: item.Namespace, Name: item.Name},
-		})
-	}
-
-	return requests
 }

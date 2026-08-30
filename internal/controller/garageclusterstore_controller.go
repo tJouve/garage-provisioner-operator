@@ -23,13 +23,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
 )
@@ -48,7 +45,7 @@ const (
 
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores/status,verbs=update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -107,32 +104,6 @@ func (r *GarageClusterStoreReconciler) SetupWithManager(mgr ctrl.Manager) error 
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&storagev1alpha1.GarageClusterStore{}).
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.mapSecretToClusterStores),
-		).
 		Named("garageclusterstore").
 		Complete(r)
-}
-
-func (r *GarageClusterStoreReconciler) mapSecretToClusterStores(ctx context.Context, obj client.Object) []reconcile.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-
-	if len(secret.OwnerReferences) == 0 {
-		return nil
-	}
-
-	requests := make([]reconcile.Request, 0)
-	for _, owner := range secret.OwnerReferences {
-		if owner.APIVersion != storagev1alpha1.GroupVersion.String() || owner.Kind != "GarageClusterStore" || owner.Name == "" {
-			continue
-		}
-
-		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: owner.Name}})
-	}
-
-	return requests
 }
