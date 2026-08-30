@@ -44,6 +44,12 @@ type GarageStoreStatus struct {
 	// lastValidation is the last successful validation timestamp.
 	// +optional
 	LastValidation *metav1.Time `json:"lastValidation,omitempty"`
+
+	// conditions represent the current state of the GarageStore resource.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

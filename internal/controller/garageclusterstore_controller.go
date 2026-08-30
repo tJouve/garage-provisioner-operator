@@ -1,0 +1,138 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
+)
+
+// GarageClusterStoreReconciler reconciles a GarageClusterStore object
+type GarageClusterStoreReconciler struct {
+	client.Client
+	Scheme   *runtime.Scheme
+	Recorder events.EventRecorder
+}
+
+const (
+	transientRequeueDelay = 30 * time.Second
+	authRequeueDelay      = 5 * time.Minute
+)
+
+// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garageclusterstores,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garageclusterstores/status,verbs=update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+func (r *GarageClusterStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	store := &storagev1alpha1.GarageClusterStore{}
+	if err := r.Get(ctx, req.NamespacedName, store); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	garageClient, err := loadGarageClientFromSpec(ctx, r.Client, store.Spec.AdminURL, store.Spec.AdminToken, "")
+	if err != nil {
+		if statusErr := UpdateStoreStatus(ctx, r.Client, store, false, err); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+
+		log.Error(err, "Could not load Garage admin client", "name", store.Name)
+		r.Recorder.Eventf(store, nil, corev1.EventTypeWarning, reasonHealthCheckFailed, "LoadClient", "%s", err.Error())
+		return ctrl.Result{RequeueAfter: transientRequeueDelay}, nil
+	}
+
+	if err := garageClient.Health(ctx); err != nil {
+		if statusErr := UpdateStoreStatus(ctx, r.Client, store, false, err); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+
+		requeueDelay := transientRequeueDelay
+		if isAuthError(err) {
+			requeueDelay = authRequeueDelay
+		}
+
+		log.Error(err, "Could not validate Garage admin endpoint", "name", store.Name)
+		r.Recorder.Eventf(store, nil, corev1.EventTypeWarning, reasonHealthCheckFailed, "HealthCheck", "%s", err.Error())
+		return ctrl.Result{RequeueAfter: requeueDelay}, nil
+	}
+
+	if err := UpdateStoreStatus(ctx, r.Client, store, true, nil); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	r.Recorder.Eventf(store, nil, corev1.EventTypeNormal, reasonHealthCheckPassed, "HealthCheck", "Garage admin endpoint validated")
+	log.Info("Validated Garage admin endpoint", "name", store.Name)
+
+	return ctrl.Result{RequeueAfter: transientRequeueDelay}, nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *GarageClusterStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorder("garageclusterstore-controller")
+	}
+
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&storagev1alpha1.GarageClusterStore{}).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.mapSecretToClusterStores),
+		).
+		Named("garageclusterstore").
+		Complete(r)
+}
+
+func (r *GarageClusterStoreReconciler) mapSecretToClusterStores(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	if len(secret.OwnerReferences) == 0 {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
+	for _, owner := range secret.OwnerReferences {
+		if owner.APIVersion != storagev1alpha1.GroupVersion.String() || owner.Kind != "GarageClusterStore" || owner.Name == "" {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: owner.Name}})
+	}
+
+	return requests
+}

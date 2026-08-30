@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
+	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/controller"
 	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
 	// +kubebuilder:scaffold:imports
 )
@@ -190,6 +191,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.GarageClusterStoreReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("garageclusterstore-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GarageClusterStore")
+		os.Exit(1)
+	}
+	if err := (&controller.GarageStoreReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("garagestore-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GarageStore")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
