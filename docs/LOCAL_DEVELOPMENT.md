@@ -79,6 +79,8 @@ kubectl get nodes
 
 For direct mode, install manifests once before running:
 
+RBAC for manager is namespace-scoped: `Role` + `RoleBinding` in `operators` namespace (not cluster-wide `ClusterRole`).
+
 ```bash
 make dev-deploy
 ```
