@@ -173,6 +173,14 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+.PHONY: docker-build-push-dev
+docker-build-push-dev: ## Build and push docker image with timestamp tag (dev convenience)
+	@TIMESTAMP=$$(date +%s); \
+	IMG="tjouve/garage-provisioner-operator:$$TIMESTAMP"; \
+	echo "Building and pushing image: $$IMG"; \
+	$(CONTAINER_TOOL) build -t $$IMG .; \
+	docker push $$IMG
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
