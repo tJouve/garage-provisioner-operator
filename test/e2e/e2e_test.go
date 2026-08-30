@@ -212,8 +212,6 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Eventually(verifyMetricsServerStarted, 3*time.Minute, time.Second).Should(Succeed())
 
-			// +kubebuilder:scaffold:e2e-metrics-webhooks-readiness
-
 			By("creating the curl-metrics pod to access the metrics endpoint")
 			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
 				"--namespace", namespace,
@@ -267,8 +265,6 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
-
-		// +kubebuilder:scaffold:e2e-webhooks-checks
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying

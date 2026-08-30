@@ -59,7 +59,7 @@ const (
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores,verbs=get;list;watch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop.
 func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
