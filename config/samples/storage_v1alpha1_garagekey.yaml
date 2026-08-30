@@ -1,0 +1,9 @@
+apiVersion: storage.deuxfleurs.fr/v1alpha1
+kind: GarageKey
+metadata:
+  labels:
+    app.kubernetes.io/name: garage-provisioner-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: garagekey-sample
+spec:
+  # TODO(user): Add fields here
