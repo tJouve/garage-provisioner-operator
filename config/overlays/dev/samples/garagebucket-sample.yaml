@@ -1,0 +1,13 @@
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageBucket
+metadata:
+  name: test-bucket
+  namespace: default
+spec:
+  clusterRef:
+    name: local-garage
+  globalAlias: test-bucket-alias
+  quotas:
+    maxSize: 10737418240
+    maxObjects: 1000000
+  deletionPolicy: Delete

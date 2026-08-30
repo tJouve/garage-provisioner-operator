@@ -1,0 +1,12 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: garage-dev
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 3903
+        hostPort: 3903
+        protocol: TCP
+    extraMounts:
+      - hostPath: /tmp/garage-dev-data
+        containerPath: /var/lib/garage-dev-data

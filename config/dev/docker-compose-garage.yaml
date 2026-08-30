@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  garage:
+    image: dxflrs/garage:latest
+    container_name: garage-dev
+    restart: unless-stopped
+    ports:
+      - "3901:3901" # RPC
+      - "3903:3903" # Admin API
+      - "3904:3904" # S3 API
+    environment:
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-mysecrettoken123}
+      GARAGE_RPC_BIND_ADDR: ${GARAGE_RPC_BIND_ADDR:-0.0.0.0:3901}
+      GARAGE_ADMIN_BIND_ADDR: ${GARAGE_ADMIN_BIND_ADDR:-0.0.0.0:3903}
+      GARAGE_S3_BIND_ADDR: ${GARAGE_S3_BIND_ADDR:-0.0.0.0:3904}
+      GARAGE_DB_ENGINE: ${GARAGE_DB_ENGINE:-sqlite}
+      GARAGE_REPLICATION_MODE: ${GARAGE_REPLICATION_MODE:-none}
+    volumes:
+      - garage-data:/data
+
+volumes:
+  garage-data: {}

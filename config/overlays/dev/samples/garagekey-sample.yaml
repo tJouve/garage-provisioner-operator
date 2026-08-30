@@ -1,0 +1,14 @@
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageKey
+metadata:
+  name: test-key
+  namespace: default
+spec:
+  bucketRef:
+    name: test-bucket
+  bucketPermissions:
+    read: true
+    write: true
+    owner: false
+  secretRef:
+    name: test-bucket-credentials

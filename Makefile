@@ -21,6 +21,12 @@ CONTAINER_TOOL ?= docker
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
+# Allow pass-through args for `make run -- --flag value`.
+ifeq (run,$(firstword $(MAKECMDGOALS)))
+  RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(foreach arg,$(RUN_ARGS),$(eval $(arg):;@:))
+endif
+
 .PHONY: all
 all: build
 
@@ -70,6 +76,12 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= garage-provisioner-operator-test-e2e
+DEV_KIND_CLUSTER ?= garage-dev
+DEV_KIND_CONFIG ?= config/dev/kind-config.yaml
+DEV_OVERLAY ?= config/overlays/dev
+DEV_SAMPLES ?= config/dev/samples
+DEV_IMG ?= garage-operator:dev
+DEV_OPERATOR_NAMESPACE ?= garage-provisioner-operator-system
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -94,6 +106,42 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+.PHONY: kind-create
+kind-create: ## Create local Kind cluster for development.
+	@mkdir -p /tmp/garage-dev-data
+	@case "$$($(KIND) get clusters)" in \
+		*"$(DEV_KIND_CLUSTER)"*) \
+			echo "Kind cluster '$(DEV_KIND_CLUSTER)' already exists. Skipping creation." ;; \
+		*) \
+			echo "Creating Kind cluster '$(DEV_KIND_CLUSTER)' from $(DEV_KIND_CONFIG)..."; \
+			$(KIND) create cluster --name $(DEV_KIND_CLUSTER) --config $(DEV_KIND_CONFIG) ;; \
+	esac
+
+.PHONY: kind-delete
+kind-delete: ## Delete local Kind cluster used for development.
+	@$(KIND) delete cluster --name $(DEV_KIND_CLUSTER)
+
+.PHONY: kind-load-image
+kind-load-image: ## Load operator image into local Kind cluster.
+	@$(KIND) load docker-image $(DEV_IMG) --name $(DEV_KIND_CLUSTER)
+
+.PHONY: dev-deploy
+dev-deploy: kustomize ## Deploy operator with development overlay.
+	"$(KUSTOMIZE)" build $(DEV_OVERLAY) | "$(KUBECTL)" apply -f -
+
+.PHONY: dev-samples
+dev-samples: kustomize ## Apply development sample CRs.
+	"$(KUSTOMIZE)" build $(DEV_SAMPLES) | "$(KUBECTL)" apply -f -
+
+.PHONY: dev-logs
+dev-logs: ## Stream controller logs from development deployment.
+	"$(KUBECTL)" logs -n $(DEV_OPERATOR_NAMESPACE) deployment/garage-provisioner-operator-controller-manager -c manager -f
+
+.PHONY: dev-clean
+dev-clean: kustomize ## Delete development samples and operator resources.
+	-"$(KUSTOMIZE)" build $(DEV_SAMPLES) | "$(KUBECTL)" delete --ignore-not-found=true -f -
+	-"$(KUSTOMIZE)" build $(DEV_OVERLAY) | "$(KUBECTL)" delete --ignore-not-found=true -f -
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
@@ -114,7 +162,7 @@ build: manifests generate fmt vet ## Build manager binary.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+	go run ./cmd/main.go $(RUN_ARGS)
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

@@ -1,0 +1,11 @@
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageStore
+metadata:
+  name: local-garage
+  namespace: garage-provisioner-operator-system
+spec:
+  adminURL: http://host.docker.internal:3903
+  adminToken:
+    name: garage-admin-secret
+    key: token
+    namespace: garage-provisioner-operator-system
