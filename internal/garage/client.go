@@ -42,9 +42,13 @@ type GarageAdminClient struct {
 type CreateBucketReq struct {
 	Name        string            `json:"name,omitempty"`
 	GlobalAlias string            `json:"globalAlias,omitempty"`
+	LocalAlias  *string           `json:"localAlias,omitempty"`
 	Quotas      *BucketQuotas     `json:"quotas,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
+
+// CreateBucketRequest is kept as an alias for compatibility with controller helpers.
+type CreateBucketRequest = CreateBucketReq
 
 // UpdateBucketReq defines bucket update payload.
 type UpdateBucketReq struct {
@@ -61,12 +65,20 @@ type BucketQuotas struct {
 
 // BucketInfo defines bucket information returned by Garage.
 type BucketInfo struct {
-	ID          string            `json:"id,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	GlobalAlias string            `json:"globalAlias,omitempty"`
-	Quotas      *BucketQuotas     `json:"quotas,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	CreatedAt   *time.Time        `json:"createdAt,omitempty"`
+	ID             string            `json:"id,omitempty"`
+	BucketID       string            `json:"bucketId,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	GlobalAlias    string            `json:"globalAlias,omitempty"`
+	Quotas         *BucketQuotas     `json:"quotas,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	ObjectCount    *int64            `json:"objectCount,omitempty"`
+	ObjectsCount   *int64            `json:"objectsCount,omitempty"`
+	Objects        *int64            `json:"objects,omitempty"`
+	UploadCount    *int64            `json:"uploadCount,omitempty"`
+	UploadsCount   *int64            `json:"uploadsCount,omitempty"`
+	Uploads        *int64            `json:"uploads,omitempty"`
+	IncompleteSize *int64            `json:"incompleteSize,omitempty"`
+	CreatedAt      *time.Time        `json:"createdAt,omitempty"`
 }
 
 // CreateKeyReq defines key creation payload.

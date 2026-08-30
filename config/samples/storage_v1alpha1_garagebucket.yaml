@@ -1,9 +1,13 @@
 apiVersion: storage.deuxfleurs.fr/v1alpha1
 kind: GarageBucket
 metadata:
-  labels:
-    app.kubernetes.io/name: garage-provisioner-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: garagebucket-sample
+  name: app-data
+  namespace: storage
 spec:
-  # TODO(user): Add fields here
+  clusterRef:
+    name: garage
+  globalAlias: my-app-bucket
+  quotas:
+    maxSize: 536870912000
+    maxObjects: 10000000
+  deletionPolicy: Delete

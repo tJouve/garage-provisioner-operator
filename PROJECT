@@ -30,6 +30,7 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
+  controller: true
   domain: deuxfleurs.fr
   group: storage
   kind: GarageBucket

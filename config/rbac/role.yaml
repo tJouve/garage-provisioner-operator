@@ -7,11 +7,44 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - storage.deuxfleurs.fr
+  resources:
+  - garagebuckets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storage.deuxfleurs.fr
+  resources:
+  - garagebuckets/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - storage.deuxfleurs.fr
+  resources:
+  - garagebuckets/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - storage.deuxfleurs.fr
   resources:
