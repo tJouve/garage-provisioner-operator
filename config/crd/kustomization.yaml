@@ -2,10 +2,10 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/storage.deuxfleurs.fr_garageclusterstores.yaml
-- bases/storage.deuxfleurs.fr_garagestores.yaml
-- bases/storage.deuxfleurs.fr_garagebuckets.yaml
-- bases/storage.deuxfleurs.fr_garagekeys.yaml
+- bases/smokingcat.net_garageclusterstores.yaml
+- bases/smokingcat.net_garagestores.yaml
+- bases/smokingcat.net_garagebuckets.yaml
+- bases/smokingcat.net_garagekeys.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

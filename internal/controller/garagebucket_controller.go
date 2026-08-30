@@ -49,15 +49,15 @@ type GarageBucketReconciler struct {
 }
 
 const (
-	garageBucketFinalizer = "garagebucket.storage.deuxfleurs.fr/finalizer"
+	garageBucketFinalizer = "garagebucket.smokingcat.net/finalizer"
 	bucketRequeueDelay    = 30 * time.Second
 )
 
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garagebuckets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garagebuckets/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garagebuckets/finalizers,verbs=update
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garagestores,verbs=get;list;watch
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garageclusterstores,verbs=get;list;watch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garagebuckets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garagebuckets/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garagebuckets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores,verbs=get;list;watch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 

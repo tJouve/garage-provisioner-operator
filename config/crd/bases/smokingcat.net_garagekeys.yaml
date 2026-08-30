@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: garagebuckets.storage.deuxfleurs.fr
+  name: garagekeys.smokingcat.net
 spec:
-  group: storage.deuxfleurs.fr
+  group: smokingcat.net
   names:
-    kind: GarageBucket
-    listKind: GarageBucketList
-    plural: garagebuckets
-    singular: garagebucket
+    kind: GarageKey
+    listKind: GarageKeyList
+    plural: garagekeys
+    singular: garagekey
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GarageBucket is the Schema for the garagebuckets API
+        description: GarageKey is the Schema for the garagekeys API
         properties:
           apiVersion:
             description: |-
@@ -37,57 +37,56 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of GarageBucket
+            description: spec defines the desired state of GarageKey
             properties:
-              clusterRef:
-                description: clusterRef references a GarageClusterStore or GarageStore
-                  object.
+              bucketPermissions:
+                description: bucketPermissions configures access for this key on the
+                  referenced bucket.
+                properties:
+                  owner:
+                    description: owner grants owner-level access.
+                    type: boolean
+                  read:
+                    description: read grants object read access.
+                    type: boolean
+                  write:
+                    description: write grants object write access.
+                    type: boolean
+                type: object
+              bucketRef:
+                description: bucketRef references the target GarageBucket.
                 properties:
                   name:
-                    description: name references a GarageClusterStore or GarageStore
-                      object.
+                    description: name references a GarageBucket object.
                     minLength: 1
                     type: string
                 required:
                 - name
                 type: object
-              deletionPolicy:
-                default: Delete
-                description: deletionPolicy controls external resource deletion when
-                  the CR is deleted.
-                enum:
-                - Delete
-                - Retain
-                type: string
-              globalAlias:
-                description: globalAlias sets an optional alias for the bucket.
-                minLength: 1
-                type: string
-              quotas:
-                description: quotas defines optional bucket limits.
+              secretRef:
+                description: |-
+                  secretRef selects where generated credentials are stored.
+                  If omitted, the controller should use "{name}-credentials".
                 properties:
-                  maxObjects:
-                    description: maxObjects is the maximum number of objects.
-                    format: int64
-                    minimum: 0
-                    type: integer
-                  maxSize:
-                    description: maxSize is the maximum bucket size in bytes.
-                    format: int64
-                    minimum: 0
-                    type: integer
+                  name:
+                    description: name is the Secret name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
                 type: object
             required:
-            - clusterRef
+            - bucketPermissions
+            - bucketRef
             type: object
           status:
-            description: status defines the observed state of GarageBucket
+            description: status defines the observed state of GarageKey
             properties:
-              bucketId:
-                description: bucketId is the Garage bucket identifier.
+              accessKeyId:
+                description: accessKeyId is the Garage access key identifier.
                 type: string
               conditions:
-                description: conditions represent the current state of the GarageBucket
+                description: conditions represent the current state of the GarageKey
                   resource.
                 items:
                   description: Condition contains details for one aspect of the current

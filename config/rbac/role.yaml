@@ -24,7 +24,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garagebuckets
   - garagekeys
@@ -37,14 +37,14 @@ rules:
   - update
   - watch
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garagebuckets/finalizers
   - garagekeys/finalizers
   verbs:
   - update
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garagebuckets/status
   - garagekeys/status
@@ -53,7 +53,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garageclusterstores
   - garagestores
@@ -63,7 +63,7 @@ rules:
   - patch
   - watch
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garageclusterstores/status
   - garagestores/status

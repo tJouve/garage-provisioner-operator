@@ -4,20 +4,21 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: garagekeys.storage.deuxfleurs.fr
+  name: garageclusterstores.smokingcat.net
 spec:
-  group: storage.deuxfleurs.fr
+  group: smokingcat.net
   names:
-    kind: GarageKey
-    listKind: GarageKeyList
-    plural: garagekeys
-    singular: garagekey
-  scope: Namespaced
+    kind: GarageClusterStore
+    listKind: GarageClusterStoreList
+    plural: garageclusterstores
+    singular: garageclusterstore
+  scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GarageKey is the Schema for the garagekeys API
+        description: GarageClusterStore is the Schema for the garageclusterstores
+          API
         properties:
           apiVersion:
             description: |-
@@ -37,56 +38,43 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of GarageKey
+            description: spec defines the desired state of GarageClusterStore
             properties:
-              bucketPermissions:
-                description: bucketPermissions configures access for this key on the
-                  referenced bucket.
+              adminToken:
+                description: adminToken references the Secret key containing the Garage
+                  admin token.
                 properties:
-                  owner:
-                    description: owner grants owner-level access.
-                    type: boolean
-                  read:
-                    description: read grants object read access.
-                    type: boolean
-                  write:
-                    description: write grants object write access.
-                    type: boolean
-                type: object
-              bucketRef:
-                description: bucketRef references the target GarageBucket.
-                properties:
-                  name:
-                    description: name references a GarageBucket object.
+                  key:
+                    description: key is the Secret data key.
                     minLength: 1
                     type: string
-                required:
-                - name
-                type: object
-              secretRef:
-                description: |-
-                  secretRef selects where generated credentials are stored.
-                  If omitted, the controller should use "{name}-credentials".
-                properties:
                   name:
                     description: name is the Secret name.
                     minLength: 1
                     type: string
+                  namespace:
+                    description: namespace is required for cluster-scoped references
+                      and optional for namespaced ones.
+                    minLength: 1
+                    type: string
                 required:
+                - key
                 - name
                 type: object
+              adminURL:
+                description: adminURL is the Garage admin API endpoint URL.
+                format: uri
+                minLength: 1
+                type: string
             required:
-            - bucketPermissions
-            - bucketRef
+            - adminToken
+            - adminURL
             type: object
           status:
-            description: status defines the observed state of GarageKey
+            description: status defines the observed state of GarageClusterStore
             properties:
-              accessKeyId:
-                description: accessKeyId is the Garage access key identifier.
-                type: string
               conditions:
-                description: conditions represent the current state of the GarageKey
+                description: conditions represent the current state of the GarageClusterStore
                   resource.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -146,10 +134,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              lastSyncTime:
-                description: lastSyncTime is the last successful reconciliation timestamp.
+              lastValidation:
+                description: lastValidation is the last successful validation timestamp.
                 format: date-time
                 type: string
+              ready:
+                description: ready indicates whether admin endpoint validation succeeded.
+                type: boolean
             type: object
         required:
         - spec

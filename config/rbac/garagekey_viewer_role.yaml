@@ -1,7 +1,7 @@
 # This rule is not used by the project garage-provisioner-operator itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
-# Grants read-only access to storage.deuxfleurs.fr resources.
+# Grants read-only access to smokingcat.net resources.
 # This role is intended for users who need visibility into these resources
 # without permissions to modify them. It is ideal for monitoring purposes and limited-access viewing.
 
@@ -14,7 +14,7 @@ metadata:
   name: garagekey-viewer-role
 rules:
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garagekeys
   verbs:
@@ -22,7 +22,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - storage.deuxfleurs.fr
+  - smokingcat.net
   resources:
   - garagekeys/status
   verbs:

@@ -1,4 +1,4 @@
-apiVersion: storage.deuxfleurs.fr/v1alpha1
+apiVersion: smokingcat.net/v1alpha1
 kind: GarageStore
 metadata:
   labels:

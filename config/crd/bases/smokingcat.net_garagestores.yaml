@@ -4,21 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: garageclusterstores.storage.deuxfleurs.fr
+  name: garagestores.smokingcat.net
 spec:
-  group: storage.deuxfleurs.fr
+  group: smokingcat.net
   names:
-    kind: GarageClusterStore
-    listKind: GarageClusterStoreList
-    plural: garageclusterstores
-    singular: garageclusterstore
-  scope: Cluster
+    kind: GarageStore
+    listKind: GarageStoreList
+    plural: garagestores
+    singular: garagestore
+  scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GarageClusterStore is the Schema for the garageclusterstores
-          API
+        description: GarageStore is the Schema for the garagestores API
         properties:
           apiVersion:
             description: |-
@@ -38,7 +37,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of GarageClusterStore
+            description: spec defines the desired state of GarageStore
             properties:
               adminToken:
                 description: adminToken references the Secret key containing the Garage
@@ -71,10 +70,10 @@ spec:
             - adminURL
             type: object
           status:
-            description: status defines the observed state of GarageClusterStore
+            description: status defines the observed state of GarageStore
             properties:
               conditions:
-                description: conditions represent the current state of the GarageClusterStore
+                description: conditions represent the current state of the GarageStore
                   resource.
                 items:
                   description: Condition contains details for one aspect of the current

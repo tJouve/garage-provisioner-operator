@@ -46,8 +46,8 @@ const (
 	authRequeueDelay      = 5 * time.Minute
 )
 
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garageclusterstores,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garageclusterstores/status,verbs=update;patch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores/status,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to

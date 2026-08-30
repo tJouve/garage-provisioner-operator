@@ -40,8 +40,8 @@ type GarageStoreReconciler struct {
 	Recorder events.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garagestores,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups=storage.deuxfleurs.fr,resources=garagestores/status,verbs=update;patch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores/status,verbs=update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list
 
 func (r *GarageStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
