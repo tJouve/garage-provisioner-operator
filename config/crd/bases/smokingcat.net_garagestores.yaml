@@ -51,11 +51,6 @@ spec:
                     description: name is the Secret name.
                     minLength: 1
                     type: string
-                  namespace:
-                    description: namespace is required for cluster-scoped references
-                      and optional for namespaced ones.
-                    minLength: 1
-                    type: string
                 required:
                 - key
                 - name

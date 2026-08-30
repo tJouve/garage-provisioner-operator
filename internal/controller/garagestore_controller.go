@@ -52,7 +52,7 @@ func (r *GarageStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	garageClient, err := loadGarageClientFromSpec(ctx, r.Client, store.Spec.AdminURL, store.Spec.AdminToken, store.Namespace)
+	garageClient, err := loadGarageClientFromSpec(ctx, r.Client, store.Spec.AdminURL, store.Spec.AdminToken)
 	if err != nil {
 		if statusErr := UpdateStoreStatus(ctx, r.Client, store, false, err); statusErr != nil {
 			return ctrl.Result{}, statusErr

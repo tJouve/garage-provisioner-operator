@@ -25,11 +25,6 @@ type SecretKeyRef struct {
 	// key is the Secret data key.
 	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
-
-	// namespace is required for cluster-scoped references and optional for namespaced ones.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	Namespace string `json:"namespace,omitempty"`
 }
 
 // GarageStoreReference references a Garage store object by name.

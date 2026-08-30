@@ -11,4 +11,3 @@ spec:
   adminToken:
     name: garage-admin-secret
     key: token
-    namespace: storage
