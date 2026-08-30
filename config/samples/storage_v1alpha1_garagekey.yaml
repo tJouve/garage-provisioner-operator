@@ -1,9 +1,14 @@
 apiVersion: storage.deuxfleurs.fr/v1alpha1
 kind: GarageKey
 metadata:
-  labels:
-    app.kubernetes.io/name: garage-provisioner-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: garagekey-sample
+  name: app-key
+  namespace: storage
 spec:
-  # TODO(user): Add fields here
+  bucketRef:
+    name: app-data
+  bucketPermissions:
+    read: true
+    write: true
+    owner: false
+  secretRef:
+    name: app-s3-credentials

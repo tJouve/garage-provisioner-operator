@@ -16,13 +16,18 @@ rules:
   resources:
   - secrets
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - storage.deuxfleurs.fr
   resources:
   - garagebuckets
+  - garagekeys
   verbs:
   - create
   - delete
@@ -35,12 +40,14 @@ rules:
   - storage.deuxfleurs.fr
   resources:
   - garagebuckets/finalizers
+  - garagekeys/finalizers
   verbs:
   - update
 - apiGroups:
   - storage.deuxfleurs.fr
   resources:
   - garagebuckets/status
+  - garagekeys/status
   verbs:
   - get
   - patch

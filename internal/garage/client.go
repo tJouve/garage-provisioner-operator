@@ -87,14 +87,29 @@ type CreateKeyReq struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// CreateKeyRequest is kept as an alias for compatibility with controller helpers.
+type CreateKeyRequest = CreateKeyReq
+
+// KeyBucketPermissions captures key permissions for one bucket.
+type KeyBucketPermissions struct {
+	Permissions BucketPermissions `json:"permissions,omitempty"`
+	Read        bool              `json:"read,omitempty"`
+	Write       bool              `json:"write,omitempty"`
+	Owner       bool              `json:"owner,omitempty"`
+}
+
 // KeyInfo defines key information returned by Garage.
 type KeyInfo struct {
-	ID          string            `json:"id,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	AccessKeyID string            `json:"accessKeyId,omitempty"`
-	SecretKey   string            `json:"secretKey,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	CreatedAt   *time.Time        `json:"createdAt,omitempty"`
+	ID              string                          `json:"id,omitempty"`
+	Name            string                          `json:"name,omitempty"`
+	AccessKeyID     string                          `json:"accessKeyId,omitempty"`
+	SecretKey       string                          `json:"secretKey,omitempty"`
+	SecretAccessKey string                          `json:"secretAccessKey,omitempty"`
+	Metadata        map[string]string               `json:"metadata,omitempty"`
+	BucketPerms     map[string]BucketPermissions    `json:"bucketPermissions,omitempty"`
+	Permissions     map[string]BucketPermissions    `json:"permissions,omitempty"`
+	Buckets         map[string]KeyBucketPermissions `json:"buckets,omitempty"`
+	CreatedAt       *time.Time                      `json:"createdAt,omitempty"`
 }
 
 // BucketPermissions defines bucket-level ACL permissions.
@@ -218,6 +233,35 @@ func (c *GarageAdminClient) DenyBucketKey(ctx context.Context, bucketID, keyID s
 // Health checks Garage admin API liveness.
 func (c *GarageAdminClient) Health(ctx context.Context) error {
 	return c.doJSON(ctx, http.MethodGet, "/health", nil, nil)
+}
+
+// CanonicalizePermissions computes which permissions need to be granted or revoked.
+func CanonicalizePermissions(current, desired BucketPermissions) (BucketPermissions, BucketPermissions) {
+	toAllow := BucketPermissions{}
+	toDeny := BucketPermissions{}
+
+	if desired.Read && !current.Read {
+		toAllow.Read = true
+	}
+	if !desired.Read && current.Read {
+		toDeny.Read = true
+	}
+
+	if desired.Write && !current.Write {
+		toAllow.Write = true
+	}
+	if !desired.Write && current.Write {
+		toDeny.Write = true
+	}
+
+	if desired.Owner && !current.Owner {
+		toAllow.Owner = true
+	}
+	if !desired.Owner && current.Owner {
+		toDeny.Owner = true
+	}
+
+	return toAllow, toDeny
 }
 
 func (c *GarageAdminClient) doJSON(ctx context.Context, method, requestPath string, in any, out any) error {
