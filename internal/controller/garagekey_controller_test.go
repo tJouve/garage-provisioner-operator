@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
 )
 
 const (
@@ -54,7 +54,7 @@ var _ = Describe("GarageKey Controller", func() {
 					Namespace: testKeyNamespace,
 				},
 				Spec: storagev1alpha1.GarageKeySpec{
-					BucketRef: storagev1alpha1.GarageBucketReference{Name: testKeyBucketRef},
+					BucketRef: storagev1alpha1.BucketRef{Name: testKeyBucketRef},
 					BucketPermissions: storagev1alpha1.BucketPermissions{
 						Read: true,
 					},

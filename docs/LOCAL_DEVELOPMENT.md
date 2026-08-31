@@ -329,7 +329,7 @@ kubectl get secret garage-admin-secret -n garage-provisioner-operator-system
 kubectl get secret garage-admin-secret -n garage-provisioner-operator-system -o jsonpath='{.data.token}'
 ```
 
-Ensure `spec.adminToken.name`, `spec.adminToken.key`, and optional `spec.adminToken.namespace` match actual Secret.
+Ensure `spec.adminSecretRef.name` and optional `spec.adminSecretRef.namespace` match actual Secret.
 
 ---
 

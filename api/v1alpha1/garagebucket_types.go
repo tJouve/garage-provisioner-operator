@@ -26,8 +26,8 @@ import (
 
 // GarageBucketSpec defines the desired state of GarageBucket.
 type GarageBucketSpec struct {
-	// clusterRef references a GarageClusterStore or GarageStore object.
-	ClusterRef GarageStoreReference `json:"clusterRef"`
+	// garageStoreRef references a GarageStore or GarageClusterStore object.
+	GarageStoreRef GarageStoreRef `json:"garageStoreRef"`
 
 	// globalAlias sets an optional alias for the bucket.
 	// +optional
@@ -42,6 +42,12 @@ type GarageBucketSpec struct {
 	// +optional
 	// +kubebuilder:default=Delete
 	DeletionPolicy GarageDeletionPolicy `json:"deletionPolicy,omitempty"`
+
+	// refreshInterval defines how often to reconcile this resource.
+	// +kubebuilder:validation:Format=duration
+	// +optional
+	// +kubebuilder:default="24h"
+	RefreshInterval *metav1.Duration `json:"refreshInterval,omitempty"`
 }
 
 // GarageBucketStatus defines the observed state of GarageBucket.
@@ -49,6 +55,10 @@ type GarageBucketStatus struct {
 	// bucketId is the Garage bucket identifier.
 	// +optional
 	BucketID string `json:"bucketId,omitempty"`
+
+	// observedGeneration reflects the generation of the spec that was most recently observed.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// lastSyncTime is the last successful reconciliation timestamp.
 	// +optional

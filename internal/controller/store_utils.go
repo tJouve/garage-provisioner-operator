@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,13 +31,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
+	"github.com/tJouve/garage-provisioner-operator/internal/garage"
 )
 
 const (
-	readyConditionType = "Ready"
-	operatorNamespace  = "operators"
+	readyConditionType  = "Ready"
+	operatorNamespace   = "operators"
+	adminTokenSecretKey = "token"
 
 	reasonHealthCheckPassed = "HealthCheckPassed"
 	reasonHealthCheckFailed = "HealthCheckFailed"
@@ -49,65 +51,106 @@ var (
 	errInvalidURL     = errors.New("invalid URL")
 )
 
-// LoadGarageClientFromStore resolves a GarageStore or GarageClusterStore and returns a configured Garage API client.
+// LoadGarageClientFromStore resolves a GarageStoreRef and returns a configured Garage API client.
 func LoadGarageClientFromStore(
 	ctx context.Context,
 	k8sClient client.Client,
-	storeRef *storagev1alpha1.GarageStoreReference,
-	namespace string,
+	storeRef *storagev1alpha1.GarageStoreRef,
+	callerNamespace string,
 ) (*garage.GarageAdminClient, error) {
-	if storeRef == nil {
-		return nil, fmt.Errorf("store reference is required")
+	storeName, storeKind, storeNamespace, err := resolveGarageStoreRef(storeRef, callerNamespace)
+	if err != nil {
+		return nil, err
 	}
+
+	switch storeKind {
+	case storagev1alpha1.GarageStoreRefKindGarageStore:
+		nsStore := &storagev1alpha1.GarageStore{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: storeNamespace, Name: storeName}, nsStore); err != nil {
+			return nil, fmt.Errorf("could not get GarageStore %s/%s: %w", storeNamespace, storeName, err)
+		}
+		return loadGarageClientFromSpec(ctx, k8sClient, nsStore.Namespace, nsStore.Spec.AdminURL, nsStore.Spec.AdminSecretRef)
+	case storagev1alpha1.GarageStoreRefKindGarageClusterStore:
+		clusterStore := &storagev1alpha1.GarageClusterStore{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: storeNamespace, Name: storeName}, clusterStore); err != nil {
+			return nil, fmt.Errorf("could not get GarageClusterStore %s/%s: %w", storeNamespace, storeName, err)
+		}
+		return loadGarageClientFromSpec(ctx, k8sClient, clusterStore.Namespace, clusterStore.Spec.AdminURL, clusterStore.Spec.AdminSecretRef)
+	default:
+		return nil, fmt.Errorf("unsupported store reference kind %q", storeKind)
+	}
+}
+
+func resolveGarageStoreRef(storeRef *storagev1alpha1.GarageStoreRef, callerNamespace string) (string, string, string, error) {
+	if storeRef == nil {
+		return "", "", "", fmt.Errorf("store reference is required")
+	}
+
 	storeName := strings.TrimSpace(storeRef.Name)
 	if storeName == "" {
-		return nil, fmt.Errorf("store reference name is required")
+		return "", "", "", fmt.Errorf("store reference name is required")
 	}
 
-	if namespace != "" {
-		nsStore := &storagev1alpha1.GarageStore{}
-		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: storeName}, nsStore); err == nil {
-			return loadGarageClientFromSpec(ctx, k8sClient, nsStore.Spec.AdminURL, nsStore.Spec.AdminToken)
-		} else if !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("could not get GarageStore %s/%s: %w", namespace, storeName, err)
+	storeKind := strings.TrimSpace(storeRef.Kind)
+	if storeKind == "" {
+		return "", "", "", fmt.Errorf("store reference kind is required")
+	}
+
+	storeNamespace := callerNamespace
+	if storeKind == storagev1alpha1.GarageStoreRefKindGarageClusterStore {
+		storeNamespace = operatorNamespace
+	}
+
+	if storeRef.Namespace != nil {
+		ns := strings.TrimSpace(*storeRef.Namespace)
+		if ns == "" {
+			return "", "", "", fmt.Errorf("store reference namespace cannot be empty")
 		}
+		storeNamespace = ns
 	}
 
-	clusterStore := &storagev1alpha1.GarageClusterStore{}
-	if err := k8sClient.Get(ctx, client.ObjectKey{Name: storeName}, clusterStore); err != nil {
-		return nil, fmt.Errorf("could not get GarageClusterStore %s: %w", storeName, err)
+	if storeNamespace == "" {
+		return "", "", "", fmt.Errorf("store namespace is required")
 	}
 
-	return loadGarageClientFromSpec(ctx, k8sClient, clusterStore.Spec.AdminURL, clusterStore.Spec.AdminToken)
+	return storeName, storeKind, storeNamespace, nil
 }
 
 func loadGarageClientFromSpec(
 	ctx context.Context,
 	k8sClient client.Client,
+	ownerNamespace string,
 	adminURL string,
-	adminTokenRef storagev1alpha1.SecretKeyRef,
+	adminSecretRef storagev1alpha1.AdminSecretRef,
 ) (*garage.GarageAdminClient, error) {
 	if _, err := url.ParseRequestURI(strings.TrimSpace(adminURL)); err != nil {
 		return nil, fmt.Errorf("%w: %v", errInvalidURL, err)
 	}
 
-	secretName := strings.TrimSpace(adminTokenRef.Name)
-	secretKey := strings.TrimSpace(adminTokenRef.Key)
-	if secretName == "" || secretKey == "" {
-		return nil, fmt.Errorf("%w: admin token Secret name and key are required", errSecretNotFound)
+	secretName := strings.TrimSpace(adminSecretRef.Name)
+	if secretName == "" {
+		return nil, fmt.Errorf("%w: admin secret name is required", errSecretNotFound)
+	}
+
+	secretNamespace := strings.TrimSpace(ownerNamespace)
+	if adminSecretRef.Namespace != nil {
+		secretNamespace = strings.TrimSpace(*adminSecretRef.Namespace)
+	}
+	if secretNamespace == "" {
+		return nil, fmt.Errorf("%w: admin secret namespace is required", errSecretNotFound)
 	}
 
 	secret := &corev1.Secret{}
-	if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: operatorNamespace, Name: secretName}, secret); err != nil {
+	if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: secretNamespace, Name: secretName}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: secret %s/%s not found", errSecretNotFound, operatorNamespace, secretName)
+			return nil, fmt.Errorf("%w: secret %s/%s not found", errSecretNotFound, secretNamespace, secretName)
 		}
-		return nil, fmt.Errorf("could not get Secret %s/%s: %w", operatorNamespace, secretName, err)
+		return nil, fmt.Errorf("could not get Secret %s/%s: %w", secretNamespace, secretName, err)
 	}
 
-	tokenBytes, found := secret.Data[secretKey]
+	tokenBytes, found := secret.Data[adminTokenSecretKey]
 	if !found || len(tokenBytes) == 0 {
-		return nil, fmt.Errorf("%w: secret %s/%s key %q not found or empty", errSecretNotFound, operatorNamespace, secretName, secretKey)
+		return nil, fmt.Errorf("%w: secret %s/%s key %q not found or empty", errSecretNotFound, secretNamespace, secretName, adminTokenSecretKey)
 	}
 
 	return garage.NewGarageAdminClient(adminURL, string(tokenBytes), nil), nil
@@ -136,6 +179,7 @@ func updateGarageClusterStoreStatus(
 	reason, message, status := readyConditionFields(ready, reconcileErr)
 
 	store.Status.Ready = ready
+	store.Status.ObservedGeneration = store.GetGeneration()
 	if ready {
 		now := metav1.Now()
 		store.Status.LastValidation = &now
@@ -163,6 +207,7 @@ func updateGarageStoreStatus(
 	reason, message, status := readyConditionFields(ready, reconcileErr)
 
 	store.Status.Ready = ready
+	store.Status.ObservedGeneration = store.GetGeneration()
 	if ready {
 		now := metav1.Now()
 		store.Status.LastValidation = &now
@@ -212,4 +257,11 @@ func isAuthError(err error) bool {
 
 	lower := strings.ToLower(err.Error())
 	return strings.Contains(lower, "unauthorized") || strings.Contains(lower, "forbidden")
+}
+
+func getRefreshInterval(duration *metav1.Duration) time.Duration {
+	if duration == nil || duration.Duration == 0 {
+		return storagev1alpha1.DefaultRefreshInterval
+	}
+	return duration.Duration
 }

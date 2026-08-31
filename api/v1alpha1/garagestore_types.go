@@ -31,8 +31,24 @@ type GarageStoreSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	AdminURL string `json:"adminURL"`
 
-	// adminToken references the Secret key containing the Garage admin token.
-	AdminToken SecretKeyRef `json:"adminToken"`
+	// zone is the S3 region/zone value written to generated application credentials.
+	// +kubebuilder:validation:MinLength=1
+	Zone string `json:"zone"`
+
+	// s3EndpointURL is the S3-compatible endpoint URL written to generated credentials.
+	// +kubebuilder:validation:Format=uri
+	// +kubebuilder:validation:MinLength=1
+	S3EndpointURL string `json:"s3EndpointURL"`
+
+	// adminSecretRef references the Secret containing the Garage admin token.
+	// +kubebuilder:validation:Required
+	AdminSecretRef AdminSecretRef `json:"adminSecretRef"`
+
+	// refreshInterval defines how often to reconcile this resource.
+	// +kubebuilder:validation:Format=duration
+	// +optional
+	// +kubebuilder:default="24h"
+	RefreshInterval *metav1.Duration `json:"refreshInterval,omitempty"`
 }
 
 // GarageStoreStatus defines the observed state of GarageStore.
@@ -40,6 +56,10 @@ type GarageStoreStatus struct {
 	// ready indicates whether admin endpoint validation succeeded.
 	// +optional
 	Ready bool `json:"ready,omitempty"`
+
+	// observedGeneration reflects the generation of the spec that was most recently observed.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// lastValidation is the last successful validation timestamp.
 	// +optional

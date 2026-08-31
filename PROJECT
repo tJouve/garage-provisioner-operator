@@ -7,7 +7,7 @@ domain: deuxfleurs.fr
 layout:
 - go.kubebuilder.io/v4
 projectName: garage-provisioner-operator
-repo: github.com/deuxfleurs-org/garage-provisioner-operator
+repo: github.com/tJouve/garage-provisioner-operator
 resources:
 - api:
     crdVersion: v1
@@ -16,7 +16,7 @@ resources:
   domain: deuxfleurs.fr
   group: storage
   kind: GarageClusterStore
-  path: github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1
+  path: github.com/tJouve/garage-provisioner-operator/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -25,7 +25,7 @@ resources:
   domain: deuxfleurs.fr
   group: storage
   kind: GarageStore
-  path: github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1
+  path: github.com/tJouve/garage-provisioner-operator/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -34,7 +34,7 @@ resources:
   domain: deuxfleurs.fr
   group: storage
   kind: GarageBucket
-  path: github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1
+  path: github.com/tJouve/garage-provisioner-operator/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -43,6 +43,6 @@ resources:
   domain: deuxfleurs.fr
   group: storage
   kind: GarageKey
-  path: github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1
+  path: github.com/tJouve/garage-provisioner-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

@@ -33,7 +33,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 

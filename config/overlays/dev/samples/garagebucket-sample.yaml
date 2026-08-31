@@ -4,10 +4,12 @@ metadata:
   name: test-bucket
   namespace: default
 spec:
-  clusterRef:
+  garageStoreRef:
     name: local-garage
+    kind: GarageStore
   globalAlias: test-bucket-alias
   quotas:
     maxSize: 10737418240
     maxObjects: 1000000
   deletionPolicy: Delete
+  refreshInterval: "24h"

@@ -5,7 +5,9 @@ metadata:
   namespace: garage-provisioner-operator-system
 spec:
   adminURL: http://host.docker.internal:3903
-  adminToken:
+  zone: garage
+  s3EndpointURL: http://host.docker.internal:3900
+  adminSecretRef:
     name: garage-admin-secret
-    key: token
-    namespace: garage-provisioner-operator-system
+    namespace: operators
+  refreshInterval: "24h"

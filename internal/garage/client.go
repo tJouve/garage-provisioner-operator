@@ -27,6 +27,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const defaultHTTPTimeout = 30 * time.Second
@@ -90,26 +92,70 @@ type CreateKeyReq struct {
 // CreateKeyRequest is kept as an alias for compatibility with controller helpers.
 type CreateKeyRequest = CreateKeyReq
 
-// KeyBucketPermissions captures key permissions for one bucket.
-type KeyBucketPermissions struct {
-	Permissions BucketPermissions `json:"permissions,omitempty"`
-	Read        bool              `json:"read,omitempty"`
-	Write       bool              `json:"write,omitempty"`
-	Owner       bool              `json:"owner,omitempty"`
+// KeyInfoBucket captures key permissions for one bucket.
+type KeyInfoBucket struct {
+	ID            string            `json:"id,omitempty"`
+	GlobalAliases []string          `json:"globalAliases,omitempty"`
+	LocalAliases  []string          `json:"localAliases,omitempty"`
+	Permissions   BucketPermissions `json:"permissions,omitempty"`
+
+	// Legacy compatibility fields.
+	Read  bool `json:"read,omitempty"`
+	Write bool `json:"write,omitempty"`
+	Owner bool `json:"owner,omitempty"`
+}
+
+// KeyPerm defines key-level permissions.
+type KeyPerm struct {
+	CreateBucket bool `json:"createBucket,omitempty"`
 }
 
 // KeyInfo defines key information returned by Garage.
 type KeyInfo struct {
-	ID              string                          `json:"id,omitempty"`
-	Name            string                          `json:"name,omitempty"`
-	AccessKeyID     string                          `json:"accessKeyId,omitempty"`
-	SecretKey       string                          `json:"secretKey,omitempty"`
-	SecretAccessKey string                          `json:"secretAccessKey,omitempty"`
-	Metadata        map[string]string               `json:"metadata,omitempty"`
-	BucketPerms     map[string]BucketPermissions    `json:"bucketPermissions,omitempty"`
-	Permissions     map[string]BucketPermissions    `json:"permissions,omitempty"`
-	Buckets         map[string]KeyBucketPermissions `json:"buckets,omitempty"`
-	CreatedAt       *time.Time                      `json:"createdAt,omitempty"`
+	ID              string                       `json:"id,omitempty"`
+	Name            string                       `json:"name,omitempty"`
+	AccessKeyID     string                       `json:"accessKeyId,omitempty"`
+	SecretKey       string                       `json:"secretKey,omitempty"`
+	SecretAccessKey string                       `json:"secretAccessKey,omitempty"`
+	Metadata        map[string]string            `json:"metadata,omitempty"`
+	BucketPerms     map[string]BucketPermissions `json:"bucketPermissions,omitempty"`
+	Permissions     *KeyPerm                     `json:"permissions,omitempty"`
+	Buckets         []KeyInfoBucket              `json:"buckets,omitempty"`
+	CreatedAt       *time.Time                   `json:"createdAt,omitempty"`
+	Created         *time.Time                   `json:"created,omitempty"`
+	Expiration      *time.Time                   `json:"expiration,omitempty"`
+	Expired         bool                         `json:"expired,omitempty"`
+}
+
+// GetSecretAccessKey returns the secret access key from either Garage field variant.
+func (k *KeyInfo) GetSecretAccessKey() string {
+	if k == nil {
+		return ""
+	}
+
+	if strings.TrimSpace(k.SecretAccessKey) != "" {
+		return strings.TrimSpace(k.SecretAccessKey)
+	}
+	if strings.TrimSpace(k.SecretKey) != "" {
+		return strings.TrimSpace(k.SecretKey)
+	}
+	return ""
+}
+
+// SecretAccessKeyField returns which response field contained the secret value.
+func (k *KeyInfo) SecretAccessKeyField() string {
+	if k == nil {
+		return "none"
+	}
+
+	if strings.TrimSpace(k.SecretAccessKey) != "" {
+		return "secretAccessKey"
+	}
+	if strings.TrimSpace(k.SecretKey) != "" {
+		return "secretKey"
+	}
+
+	return "none"
 }
 
 // BucketPermissions defines bucket-level ACL permissions.
@@ -117,6 +163,12 @@ type BucketPermissions struct {
 	Read  bool `json:"read,omitempty"`
 	Write bool `json:"write,omitempty"`
 	Owner bool `json:"owner,omitempty"`
+}
+
+type bucketKeyPermissionReq struct {
+	BucketID    string            `json:"bucketId"`
+	AccessKeyID string            `json:"accessKeyId"`
+	Permissions BucketPermissions `json:"permissions"`
 }
 
 // GarageAPIError is returned for non-2xx Garage API responses.
@@ -156,7 +208,7 @@ func NewGarageAdminClient(baseURL, adminToken string, httpClient *http.Client) *
 // CreateBucket creates a new bucket.
 func (c *GarageAdminClient) CreateBucket(ctx context.Context, req CreateBucketReq) (*BucketInfo, error) {
 	var out BucketInfo
-	if err := c.doJSON(ctx, http.MethodPost, "/bucket", req, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/CreateBucket", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -165,7 +217,8 @@ func (c *GarageAdminClient) CreateBucket(ctx context.Context, req CreateBucketRe
 // GetBucketInfo returns bucket metadata by bucket identifier.
 func (c *GarageAdminClient) GetBucketInfo(ctx context.Context, bucketID string) (*BucketInfo, error) {
 	var out BucketInfo
-	if err := c.doJSON(ctx, http.MethodGet, "/bucket/"+url.PathEscape(bucketID), nil, &out); err != nil {
+	endpoint := addQueryParam("/GetBucketInfo", "id", bucketID)
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -174,7 +227,8 @@ func (c *GarageAdminClient) GetBucketInfo(ctx context.Context, bucketID string) 
 // UpdateBucket updates bucket metadata and quotas.
 func (c *GarageAdminClient) UpdateBucket(ctx context.Context, bucketID string, req UpdateBucketReq) (*BucketInfo, error) {
 	var out BucketInfo
-	if err := c.doJSON(ctx, http.MethodPut, "/bucket/"+url.PathEscape(bucketID), req, &out); err != nil {
+	endpoint := addQueryParam("/UpdateBucket", "id", bucketID)
+	if err := c.doJSON(ctx, http.MethodPost, endpoint, req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -182,13 +236,14 @@ func (c *GarageAdminClient) UpdateBucket(ctx context.Context, bucketID string, r
 
 // DeleteBucket deletes a bucket by identifier.
 func (c *GarageAdminClient) DeleteBucket(ctx context.Context, bucketID string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/bucket/"+url.PathEscape(bucketID), nil, nil)
+	endpoint := addQueryParam("/DeleteBucket", "id", bucketID)
+	return c.doJSON(ctx, http.MethodPost, endpoint, nil, nil)
 }
 
 // CreateKey creates a new Garage access key.
 func (c *GarageAdminClient) CreateKey(ctx context.Context, req CreateKeyReq) (*KeyInfo, error) {
 	var out KeyInfo
-	if err := c.doJSON(ctx, http.MethodPost, "/key", req, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/CreateKey", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -197,7 +252,8 @@ func (c *GarageAdminClient) CreateKey(ctx context.Context, req CreateKeyReq) (*K
 // GetKeyInfo returns key metadata by key identifier.
 func (c *GarageAdminClient) GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error) {
 	var out KeyInfo
-	if err := c.doJSON(ctx, http.MethodGet, "/key/"+url.PathEscape(keyID), nil, &out); err != nil {
+	endpoint := addQueryParam("/GetKeyInfo", "id", keyID)
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -205,29 +261,60 @@ func (c *GarageAdminClient) GetKeyInfo(ctx context.Context, keyID string) (*KeyI
 
 // DeleteKey deletes an access key by identifier.
 func (c *GarageAdminClient) DeleteKey(ctx context.Context, keyID string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/key/"+url.PathEscape(keyID), nil, nil)
+	endpoint := addQueryParam("/DeleteKey", "id", keyID)
+	return c.doJSON(ctx, http.MethodPost, endpoint, nil, nil)
 }
 
 // AllowBucketKey grants bucket permissions to a key.
 func (c *GarageAdminClient) AllowBucketKey(ctx context.Context, bucketID, keyID string, perms BucketPermissions) error {
-	return c.doJSON(
+	log := logf.FromContext(ctx)
+	payload := bucketKeyPermissionReq{BucketID: bucketID, AccessKeyID: keyID, Permissions: perms}
+	log.V(1).Info(
+		"Sending AllowBucketKey request",
+		"bucketID", bucketID,
+		"keyID", keyID,
+		"permissions", fmt.Sprintf("read=%t write=%t owner=%t", perms.Read, perms.Write, perms.Owner),
+	)
+	err := c.doJSON(
 		ctx,
 		http.MethodPost,
-		"/bucket/"+url.PathEscape(bucketID)+"/key/"+url.PathEscape(keyID)+"/allow",
-		perms,
+		"/AllowBucketKey",
+		payload,
 		nil,
 	)
+	if err != nil {
+		log.Error(err, "AllowBucketKey request failed", "bucketID", bucketID, "keyID", keyID)
+		return err
+	}
+
+	log.V(1).Info("AllowBucketKey request succeeded", "bucketID", bucketID, "keyID", keyID)
+	return nil
 }
 
 // DenyBucketKey revokes bucket permissions from a key.
 func (c *GarageAdminClient) DenyBucketKey(ctx context.Context, bucketID, keyID string, perms BucketPermissions) error {
-	return c.doJSON(
+	log := logf.FromContext(ctx)
+	payload := bucketKeyPermissionReq{BucketID: bucketID, AccessKeyID: keyID, Permissions: perms}
+	log.V(1).Info(
+		"Sending DenyBucketKey request",
+		"bucketID", bucketID,
+		"keyID", keyID,
+		"permissions", fmt.Sprintf("read=%t write=%t owner=%t", perms.Read, perms.Write, perms.Owner),
+	)
+	err := c.doJSON(
 		ctx,
 		http.MethodPost,
-		"/bucket/"+url.PathEscape(bucketID)+"/key/"+url.PathEscape(keyID)+"/deny",
-		perms,
+		"/DenyBucketKey",
+		payload,
 		nil,
 	)
+	if err != nil {
+		log.Error(err, "DenyBucketKey request failed", "bucketID", bucketID, "keyID", keyID)
+		return err
+	}
+
+	log.V(1).Info("DenyBucketKey request succeeded", "bucketID", bucketID, "keyID", keyID)
+	return nil
 }
 
 // Health checks Garage admin API liveness.
@@ -374,8 +461,32 @@ func (c *GarageAdminClient) makeURL(requestPath string) (string, error) {
 		adminPath = path.Join(adminPath, "/v2")
 	}
 
-	base.Path = path.Join(adminPath, requestPath)
+	requestURL, err := url.Parse(requestPath)
+	if err != nil {
+		return "", fmt.Errorf("parse request path %q: %w", requestPath, err)
+	}
+	if requestURL.IsAbs() {
+		return "", fmt.Errorf("request path must be relative: %q", requestPath)
+	}
+
+	base.Path = path.Join(adminPath, requestURL.Path)
+	query := base.Query()
+	for key, values := range requestURL.Query() {
+		for _, value := range values {
+			query.Add(key, value)
+		}
+	}
+	base.RawQuery = query.Encode()
 	return base.String(), nil
+}
+
+//nolint:unparam // kept generic for endpoint query composition.
+func addQueryParam(endpoint string, key, value string) string {
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
+	return endpoint + sep + key + "=" + url.QueryEscape(value)
 }
 
 // makeRootURL constructs a URL for root-level endpoints (health, metrics)

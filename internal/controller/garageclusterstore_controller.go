@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
 )
 
 // GarageClusterStoreReconciler reconciles a GarageClusterStore object
@@ -59,8 +59,10 @@ func (r *GarageClusterStoreReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		return ctrl.Result{}, err
 	}
+	specChanged := store.GetGeneration() != store.Status.ObservedGeneration
+	refreshInterval := getRefreshInterval(store.Spec.RefreshInterval)
 
-	garageClient, err := loadGarageClientFromSpec(ctx, r.Client, store.Spec.AdminURL, store.Spec.AdminToken)
+	garageClient, err := loadGarageClientFromSpec(ctx, r.Client, store.Namespace, store.Spec.AdminURL, store.Spec.AdminSecretRef)
 	if err != nil {
 		if statusErr := UpdateStoreStatus(ctx, r.Client, store, false, err); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -92,8 +94,11 @@ func (r *GarageClusterStoreReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	r.Recorder.Eventf(store, nil, corev1.EventTypeNormal, reasonHealthCheckPassed, "HealthCheck", "Garage admin endpoint validated")
 	log.Info("Validated Garage admin endpoint", "name", store.Name)
+	if specChanged {
+		return ctrl.Result{}, nil
+	}
 
-	return ctrl.Result{RequeueAfter: transientRequeueDelay}, nil
+	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

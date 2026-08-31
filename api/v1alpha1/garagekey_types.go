@@ -27,7 +27,7 @@ import (
 // GarageKeySpec defines the desired state of GarageKey.
 type GarageKeySpec struct {
 	// bucketRef references the target GarageBucket.
-	BucketRef GarageBucketReference `json:"bucketRef"`
+	BucketRef BucketRef `json:"bucketRef"`
 
 	// bucketPermissions configures access for this key on the referenced bucket.
 	BucketPermissions BucketPermissions `json:"bucketPermissions"`
@@ -36,6 +36,12 @@ type GarageKeySpec struct {
 	// If omitted, the controller should use "{name}-credentials".
 	// +optional
 	SecretRef *LocalSecretReference `json:"secretRef,omitempty"`
+
+	// refreshInterval defines how often to reconcile this resource.
+	// +kubebuilder:validation:Format=duration
+	// +optional
+	// +kubebuilder:default="24h"
+	RefreshInterval *metav1.Duration `json:"refreshInterval,omitempty"`
 }
 
 // GarageKeyStatus defines the observed state of GarageKey.
@@ -43,6 +49,15 @@ type GarageKeyStatus struct {
 	// accessKeyId is the Garage access key identifier.
 	// +optional
 	AccessKeyID string `json:"accessKeyId,omitempty"`
+
+	// secretAccessKey holds the secret key from CreateKey response for credentials Secret recovery.
+	// +kubebuilder:validation:XValidation:rule="true"
+	// +optional
+	SecretAccessKey string `json:"secretAccessKey,omitempty"`
+
+	// observedGeneration reflects the generation of the spec that was most recently observed.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// lastSyncTime is the last successful reconciliation timestamp.
 	// +optional

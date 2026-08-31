@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/deuxfleurs-org/garage-provisioner-operator/test/utils"
+	"github.com/tJouve/garage-provisioner-operator/test/utils"
 )
 
 var (

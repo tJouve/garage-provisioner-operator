@@ -175,8 +175,7 @@ docker-push: ## Push docker image with the manager.
 
 .PHONY: docker-build-push-dev
 docker-build-push-dev: ## Build and push docker image with timestamp tag (dev convenience)
-	@TIMESTAMP=$$(date +%s); \
-	IMG="tjouve/garage-provisioner-operator:$$TIMESTAMP"; \
+	IMG="tjouve/garage-provisioner-operator:latest"; \
 	echo "Building and pushing image: $$IMG"; \
 	$(CONTAINER_TOOL) build -t $$IMG .; \
 	docker push $$IMG

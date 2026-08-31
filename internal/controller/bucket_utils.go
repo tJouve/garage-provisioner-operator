@@ -19,8 +19,8 @@ package controller
 import (
 	"fmt"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
+	"github.com/tJouve/garage-provisioner-operator/internal/garage"
 )
 
 func convertQuotasToGarageFormat(spec *storagev1alpha1.GarageBucketQuotas) (*garage.BucketQuotas, error) {

@@ -19,15 +19,24 @@ package controller
 import (
 	"context"
 	"fmt"
-	"net/url"
-	"path"
+	"maps"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
+	"github.com/tJouve/garage-provisioner-operator/internal/garage"
+)
+
+const (
+	credentialsSecretKeyZone            = "zone"
+	credentialsSecretKeyS3EndpointURL   = "s3_endpoint_url"
+	credentialsSecretKeyAccessKeyID     = "access_key_id"
+	credentialsSecretKeySecretAccessKey = "secret_access_key"
+	credentialsSecretKeyBucketName      = "bucket_name"
 )
 
 func buildCreateKeyReq(key *storagev1alpha1.GarageKey, bucketID string) *garage.CreateKeyRequest {
@@ -53,15 +62,17 @@ func buildCreateKeyReq(key *storagev1alpha1.GarageKey, bucketID string) *garage.
 func buildSecretFromKey(
 	key *storagev1alpha1.GarageKey,
 	keyInfo *garage.KeyInfo,
-	storeURL string,
-) *corev1.Secret {
+	zone string,
+	s3EndpointURL string,
+	bucketName string,
+) (*corev1.Secret, error) {
 	if key == nil || keyInfo == nil {
-		return nil
+		return nil, fmt.Errorf("garage key and key info are required")
 	}
 
-	secretAccessKey := keyInfo.SecretAccessKey
-	if secretAccessKey == "" {
-		secretAccessKey = keyInfo.SecretKey
+	secretData, err := buildCredentialsSecretData(zone, s3EndpointURL, keyInfo.AccessKeyID, keyInfo.GetSecretAccessKey(), bucketName)
+	if err != nil {
+		return nil, err
 	}
 
 	secret := &corev1.Secret{
@@ -70,45 +81,138 @@ func buildSecretFromKey(
 			Namespace: key.Namespace,
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"AWS_ACCESS_KEY_ID":     []byte(keyInfo.AccessKeyID),
-			"AWS_SECRET_ACCESS_KEY": []byte(secretAccessKey),
-			"AWS_S3_ENDPOINT":       []byte(extractS3Endpoint(storeURL)),
-			"AWS_REGION":            []byte("garage"),
-			"bucket_name":           []byte(key.Spec.BucketRef.Name),
-		},
+		Data: secretData,
 	}
 
-	return secret
+	return secret, nil
 }
 
-func extractS3Endpoint(storeURL string) string {
-	trimmed := strings.TrimSpace(storeURL)
-	if trimmed == "" {
-		return ""
+func buildSecretFromStatus(
+	key *storagev1alpha1.GarageKey,
+	zone string,
+	s3EndpointURL string,
+	bucketName string,
+) (*corev1.Secret, error) {
+	if key == nil {
+		return nil, fmt.Errorf("garage key is required")
 	}
 
-	parsed, err := url.Parse(trimmed)
+	secretData, err := buildCredentialsSecretData(zone, s3EndpointURL, key.Status.AccessKeyID, key.Status.SecretAccessKey, bucketName)
 	if err != nil {
-		return trimmed
+		return nil, err
 	}
 
-	cleanPath := parsed.Path
-	for _, suffix := range []string{"/v2", "/api"} {
-		if before, ok := strings.CutSuffix(cleanPath, suffix); ok {
-			cleanPath = before
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      computeSecretName(key),
+			Namespace: key.Namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: secretData,
+	}
+
+	return secret, nil
+}
+
+func buildCredentialsSecretData(zone, s3EndpointURL, accessKeyID, secretAccessKey, bucketName string) (map[string][]byte, error) {
+	secretData := map[string][]byte{
+		credentialsSecretKeyZone:            []byte(strings.TrimSpace(zone)),
+		credentialsSecretKeyS3EndpointURL:   []byte(strings.TrimSpace(s3EndpointURL)),
+		credentialsSecretKeyAccessKeyID:     []byte(strings.TrimSpace(accessKeyID)),
+		credentialsSecretKeySecretAccessKey: []byte(strings.TrimSpace(secretAccessKey)),
+		credentialsSecretKeyBucketName:      []byte(strings.TrimSpace(bucketName)),
+	}
+
+	if err := validateCredentialsSecretData(secretData); err != nil {
+		return nil, err
+	}
+
+	return secretData, nil
+}
+
+func ensureSecretHasAllFields(
+	ctx context.Context,
+	r client.Client,
+	secret *corev1.Secret,
+	zone string,
+	s3EndpointURL string,
+	accessKeyID string,
+	secretAccessKey string,
+	bucketName string,
+) error {
+	if secret == nil {
+		return fmt.Errorf("secret is required")
+	}
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+
+	requiredFields := []string{
+		credentialsSecretKeyZone,
+		credentialsSecretKeyS3EndpointURL,
+		credentialsSecretKeyAccessKeyID,
+		credentialsSecretKeySecretAccessKey,
+		credentialsSecretKeyBucketName,
+	}
+
+	needsUpdate := false
+	for _, field := range requiredFields {
+		value, exists := secret.Data[field]
+		if !exists || strings.TrimSpace(string(value)) == "" {
+			needsUpdate = true
+			break
 		}
 	}
-	cleanPath = strings.TrimRight(cleanPath, "/")
-	if cleanPath == "" {
-		parsed.Path = ""
-	} else {
-		parsed.Path = path.Clean(cleanPath)
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
 
-	return parsed.String()
+	if !needsUpdate {
+		return nil
+	}
+
+	newData, err := buildCredentialsSecretData(
+		firstNonEmpty(zone, string(secret.Data[credentialsSecretKeyZone])),
+		firstNonEmpty(s3EndpointURL, string(secret.Data[credentialsSecretKeyS3EndpointURL])),
+		firstNonEmpty(accessKeyID, string(secret.Data[credentialsSecretKeyAccessKeyID])),
+		firstNonEmpty(secretAccessKey, string(secret.Data[credentialsSecretKeySecretAccessKey])),
+		firstNonEmpty(bucketName, string(secret.Data[credentialsSecretKeyBucketName])),
+	)
+	if err != nil {
+		return err
+	}
+
+	maps.Copy(secret.Data, newData)
+
+	if err := r.Update(ctx, secret); err != nil {
+		return fmt.Errorf("failed to patch Secret with missing fields: %w", err)
+	}
+
+	return nil
+}
+
+func firstNonEmpty(primary string, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return primary
+	}
+
+	return fallback
+}
+
+func validateCredentialsSecretData(data map[string][]byte) error {
+	requiredKeys := []string{
+		credentialsSecretKeyZone,
+		credentialsSecretKeyS3EndpointURL,
+		credentialsSecretKeyAccessKeyID,
+		credentialsSecretKeySecretAccessKey,
+		credentialsSecretKeyBucketName,
+	}
+
+	for _, key := range requiredKeys {
+		value, ok := data[key]
+		if !ok || strings.TrimSpace(string(value)) == "" {
+			return fmt.Errorf("credentials Secret requires non-empty %q", key)
+		}
+	}
+
+	return nil
 }
 
 func computeSecretName(key *storagev1alpha1.GarageKey) string {
@@ -131,22 +235,60 @@ func updateKeyPermissions(
 	desired storagev1alpha1.BucketPermissions,
 	current storagev1alpha1.BucketPermissions,
 ) error {
+	log := logf.FromContext(ctx)
+
+	log.Info("Entered updateKeyPermissions", "bucketID", bucketID, "keyID", keyID)
+
+	log.Info(
+		"Updating key permissions",
+		"bucketID", bucketID,
+		"keyID", keyID,
+		"desired", fmt.Sprintf("read=%t write=%t owner=%t", desired.Read, desired.Write, desired.Owner),
+		"current", fmt.Sprintf("read=%t write=%t owner=%t", current.Read, current.Write, current.Owner),
+	)
+
 	toAllow, toDeny := garage.CanonicalizePermissions(
 		garage.BucketPermissions{Read: current.Read, Write: current.Write, Owner: current.Owner},
 		garage.BucketPermissions{Read: desired.Read, Write: desired.Write, Owner: desired.Owner},
 	)
 
+	log.Info(
+		"Canonicalized key permissions",
+		"bucketID", bucketID,
+		"keyID", keyID,
+		"toAllow", fmt.Sprintf("read=%t write=%t owner=%t", toAllow.Read, toAllow.Write, toAllow.Owner),
+		"toDeny", fmt.Sprintf("read=%t write=%t owner=%t", toDeny.Read, toDeny.Write, toDeny.Owner),
+	)
+
 	if toAllow.Read || toAllow.Write || toAllow.Owner {
+		log.Info(
+			"Calling AllowBucketKey",
+			"bucketID", bucketID,
+			"keyID", keyID,
+			"permissions", fmt.Sprintf("read=%t write=%t owner=%t", toAllow.Read, toAllow.Write, toAllow.Owner),
+		)
 		if err := garageClient.AllowBucketKey(ctx, bucketID, keyID, toAllow); err != nil {
+			log.Error(err, "AllowBucketKey failed", "bucketID", bucketID, "keyID", keyID)
 			return err
 		}
+		log.Info("AllowBucketKey succeeded", "bucketID", bucketID, "keyID", keyID)
 	}
 
 	if toDeny.Read || toDeny.Write || toDeny.Owner {
+		log.Info(
+			"Calling DenyBucketKey",
+			"bucketID", bucketID,
+			"keyID", keyID,
+			"permissions", fmt.Sprintf("read=%t write=%t owner=%t", toDeny.Read, toDeny.Write, toDeny.Owner),
+		)
 		if err := garageClient.DenyBucketKey(ctx, bucketID, keyID, toDeny); err != nil {
+			log.Error(err, "DenyBucketKey failed", "bucketID", bucketID, "keyID", keyID)
 			return err
 		}
+		log.Info("DenyBucketKey succeeded", "bucketID", bucketID, "keyID", keyID)
 	}
+
+	log.Info("Finished updating key permissions", "bucketID", bucketID, "keyID", keyID)
 
 	return nil
 }

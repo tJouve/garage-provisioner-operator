@@ -12,3 +12,4 @@ spec:
     owner: false
   secretRef:
     name: test-bucket-credentials
+  refreshInterval: "24h"

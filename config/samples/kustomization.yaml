@@ -1,7 +1,8 @@
 ## Append samples of your project ##
 resources:
-- storage_v1alpha1_garageclusterstore.yaml
-- storage_v1alpha1_garagestore.yaml
-- storage_v1alpha1_garagebucket.yaml
-- storage_v1alpha1_garagekey.yaml
+#- sample_garageclusterstore.yaml
+- sample_garagestore.yaml
+- sample_garagebucket.yaml
+- sample_garagekey.yaml
+- sample_client.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

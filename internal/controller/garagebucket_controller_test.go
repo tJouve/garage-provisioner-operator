@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
 )
 
 const (
@@ -54,10 +54,11 @@ var _ = Describe("GarageBucket Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: storagev1alpha1.GarageStoreSpec{
-					AdminURL: "https://garage-admin.example",
-					AdminToken: storagev1alpha1.SecretKeyRef{
+					AdminURL:      "https://garage-admin.example",
+					Zone:          "garage",
+					S3EndpointURL: "https://garage-s3.example",
+					AdminSecretRef: storagev1alpha1.AdminSecretRef{
 						Name: "garage-admin-token",
-						Key:  "token",
 					},
 				},
 				Status: storagev1alpha1.GarageStoreStatus{Ready: false},
@@ -73,7 +74,10 @@ var _ = Describe("GarageBucket Controller", func() {
 					Namespace: testNamespace,
 				},
 				Spec: storagev1alpha1.GarageBucketSpec{
-					ClusterRef: storagev1alpha1.GarageStoreReference{Name: testStoreName},
+					GarageStoreRef: storagev1alpha1.GarageStoreRef{
+						Name: testStoreName,
+						Kind: storagev1alpha1.GarageStoreRefKindGarageStore,
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, bucket)).To(Succeed())

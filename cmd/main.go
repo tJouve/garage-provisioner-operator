@@ -34,9 +34,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/controller"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
+	"github.com/tJouve/garage-provisioner-operator/internal/controller"
+	"github.com/tJouve/garage-provisioner-operator/internal/garage"
 	// +kubebuilder:scaffold:imports
 )
 

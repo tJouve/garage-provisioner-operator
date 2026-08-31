@@ -60,9 +60,19 @@ spec:
                     description: name references a GarageBucket object.
                     minLength: 1
                     type: string
+                  namespace:
+                    description: namespace defaults to the namespace of the GarageKey
+                      object if omitted.
+                    minLength: 1
+                    type: string
                 required:
                 - name
                 type: object
+              refreshInterval:
+                default: 24h
+                description: refreshInterval defines how often to reconcile this resource.
+                format: duration
+                type: string
               secretRef:
                 description: |-
                   secretRef selects where generated credentials are stored.
@@ -150,6 +160,17 @@ spec:
                 description: lastSyncTime is the last successful reconciliation timestamp.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: observedGeneration reflects the generation of the spec
+                  that was most recently observed.
+                format: int64
+                type: integer
+              secretAccessKey:
+                description: secretAccessKey holds the secret key from CreateKey response
+                  for credentials Secret recovery.
+                type: string
+                x-kubernetes-validations:
+                - rule: "true"
             type: object
         required:
         - spec

@@ -1,135 +1,106 @@
-# garage-provisioner-operator
-// TODO(user): Add simple overview of use/purpose
+# Garage Provisioner Operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Kubernetes operator for provisioning and managing [Garage](https://garagehq.deuxfleurs.fr/) S3 resources.
 
-## Getting Started
+API group: `smokingcat.net/v1alpha1`
+
+## What this operator manages
+
+This project provides 4 Custom Resources (CRDs):
+
+1. **GarageClusterStore** (namespaced, globally referenceable) – shared Garage admin endpoint and credentials
+2. **GarageStore** (namespaced) – namespace-local Garage admin endpoint and credentials
+3. **GarageBucket** (namespaced) – Garage bucket lifecycle and quotas
+4. **GarageKey** (namespaced) – access key lifecycle, bucket permissions, and Kubernetes Secret sync
+
+## Features
+
+- Store health validation (`/health`) with Ready conditions
+- Bucket lifecycle management: create, update, delete
+- Bucket deletion policies:
+  - `Delete` (delete remote bucket when empty)
+  - `Retain` (keep remote bucket)
+- Key lifecycle management and permission sync (`read`, `write`, `owner`)
+- Automatic credential Secret creation/update with:
+  - `zone`
+  - `s3_endpoint_url`
+  - `access_key_id`
+  - `secret_access_key`
+- Controller status conditions and event emission for debugging
+
+## Quick start
 
 ### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Kubernetes 1.20+
+- `kubectl`
+- `kustomize` support in `kubectl` (`kubectl apply -k ...`)
+- A reachable Garage admin endpoint
 
-```sh
-make docker-build docker-push IMG=<some-registry>/garage-provisioner-operator:tag
+### Install operator
+
+```bash
+kubectl apply -k config/
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+If your environment uses the default Kubebuilder layout without a root `config/kustomization.yaml`, use:
 
-**Install the CRDs into the cluster:**
-
-```sh
-make install
+```bash
+kubectl apply -k config/default
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+### Apply example resources
 
-```sh
-make deploy IMG=<some-registry>/garage-provisioner-operator:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
+```bash
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+### Check status
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
+```bash
+kubectl get garageclusterstores.smokingcat.net,garagestores.smokingcat.net,garagebuckets.smokingcat.net,garagekeys.smokingcat.net -A
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+## Architecture (conceptual)
 
-```sh
-make uninstall
+```text
+           +-------------------------------+
+           | Garage Admin API              |
+           | (health, buckets, keys, ACL) |
+           +---------------+---------------+
+                           ^
+                           | HTTP + Bearer token
+        +------------------+------------------+
+        | Kubernetes Operator (controller)    |
+        | - GarageClusterStore reconciler     |
+        | - GarageStore reconciler            |
+        | - GarageBucket reconciler           |
+        | - GarageKey reconciler              |
+        +------------------+------------------+
+                           |
+      +--------------------+---------------------+
+      |                                          |
++-----v----------------+          +--------------v---------------+
+| Store CRDs           |          | Workload CRDs                |
+| - GarageClusterStore |          | - GarageBucket               |
+| - GarageStore        |          | - GarageKey                  |
++----------------------+          +--------------+---------------+
+                                                  |
+                                                  v
+                                    +-----------------------------+
+                                    | Kubernetes Secret           |
+                                    | S3 credentials for apps     |
+                                    +-----------------------------+
 ```
 
-**UnDeploy the controller from the cluster:**
+## Documentation
 
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/garage-provisioner-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/garage-provisioner-operator/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+- [Installation Guide](docs/INSTALLATION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Examples](docs/EXAMPLES.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Development Guide](docs/DEVELOPMENT.md)
 
 ## License
 
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Apache-2.0

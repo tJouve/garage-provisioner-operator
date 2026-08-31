@@ -1,0 +1,16 @@
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageBucket
+metadata:
+  name: bucket-sample
+  namespace: garage
+spec:
+  garageStoreRef:
+    name: garagestore-sample
+    kind: GarageStore
+    namespace: garage
+  globalAlias: bucket-sample
+  quotas:
+    maxSize: 536870912000
+    maxObjects: 10000000
+  deletionPolicy: Delete
+  refreshInterval: "24h"

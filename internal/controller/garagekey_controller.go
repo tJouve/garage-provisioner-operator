@@ -36,8 +36,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
+	"github.com/tJouve/garage-provisioner-operator/internal/garage"
 )
 
 // GarageKeyReconciler reconciles a GarageKey object.
@@ -58,7 +58,7 @@ const (
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagebuckets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garagestores,verbs=get;list;watch
 // +kubebuilder:rbac:groups=smokingcat.net,resources=garageclusterstores,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop.
@@ -73,6 +73,8 @@ func (r *GarageKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
+	specChanged := key.GetGeneration() != key.Status.ObservedGeneration
+	refreshInterval := getRefreshInterval(key.Spec.RefreshInterval)
 
 	bucket, bucketID, err := r.resolveBucket(ctx, key)
 	if err != nil {
@@ -84,7 +86,7 @@ func (r *GarageKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
 
-	storeReady, storeURL, err := r.resolveStoreReadinessAndURL(ctx, key.Namespace, &bucket.Spec.ClusterRef)
+	storeReady, storeZone, storeS3EndpointURL, err := r.resolveStoreReadinessAndS3Config(ctx, key.Namespace, &bucket.Spec.GarageStoreRef)
 	if err != nil {
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "StoreNotReady", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -98,11 +100,11 @@ func (r *GarageKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "StoreNotReady", message); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
-		log.Info("Referenced store is not ready", "namespace", key.Namespace, "name", key.Name, "storeRef", bucket.Spec.ClusterRef.Name)
+		log.Info("Referenced store is not ready", "namespace", key.Namespace, "name", key.Name, "storeRef", bucket.Spec.GarageStoreRef.Name)
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
 
-	garageClient, err := LoadGarageClientFromStore(ctx, r.Client, &bucket.Spec.ClusterRef, key.Namespace)
+	garageClient, err := LoadGarageClientFromStore(ctx, r.Client, &bucket.Spec.GarageStoreRef, key.Namespace)
 	if err != nil {
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -123,18 +125,21 @@ func (r *GarageKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if strings.TrimSpace(key.Status.AccessKeyID) == "" {
-		return r.reconcileCreate(ctx, key, bucketID, storeURL, garageClient)
+		return r.reconcileCreate(ctx, key, bucketID, storeZone, storeS3EndpointURL, garageClient, refreshInterval, specChanged)
 	}
 
-	return r.reconcileUpdate(ctx, key, bucket, bucketID, storeURL, garageClient)
+	return r.reconcileUpdate(ctx, key, storeZone, storeS3EndpointURL, refreshInterval, specChanged)
 }
 
 func (r *GarageKeyReconciler) reconcileCreate(
 	ctx context.Context,
 	key *storagev1alpha1.GarageKey,
 	bucketID string,
-	storeURL string,
+	zone string,
+	s3EndpointURL string,
 	garageClient *garage.GarageAdminClient,
+	refreshInterval time.Duration,
+	specChanged bool,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -156,44 +161,76 @@ func (r *GarageKeyReconciler) reconcileCreate(
 		r.Recorder.Eventf(key, nil, corev1.EventTypeWarning, "CreateFailed", "CreateKey", "%s", err.Error())
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
+	log.V(1).Info("Received Garage create key response", "keyInfo", keyInfoForLog(keyInfo))
 
 	accessKeyID := strings.TrimSpace(keyInfo.AccessKeyID)
 	if accessKeyID == "" {
 		accessKeyID = strings.TrimSpace(keyInfo.ID)
 	}
-	if accessKeyID == "" {
-		err := fmt.Errorf("garage create key response did not include access key identifier")
+	secretAccessKey := keyInfo.GetSecretAccessKey()
+	secretAccessKeyField := keyInfo.SecretAccessKeyField()
+	if accessKeyID == "" || secretAccessKey == "" {
+		err := fmt.Errorf("garage create key response did not include access key identifier and secret access key")
+		if accessKeyID != "" {
+			err = fmt.Errorf("garage create key response did not include secret access key")
+		}
+		if secretAccessKey != "" {
+			err = fmt.Errorf("garage create key response did not include access key identifier")
+		}
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "CreateFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
+		log.Error(
+			err,
+			"Garage create key response missing required credentials fields",
+			"namespace", key.Namespace,
+			"name", key.Name,
+			"secretField", secretAccessKeyField,
+			"keyInfo", keyInfoForLog(keyInfo),
+		)
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
 	keyInfo.AccessKeyID = accessKeyID
-	if err := r.persistAccessKeyID(ctx, key, accessKeyID); err != nil {
+	log.V(1).Info("Resolved Garage secret field from create response", "secretField", secretAccessKeyField)
+	if err := r.persistKeyCredentials(ctx, key, accessKeyID, secretAccessKey); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	if strings.TrimSpace(keyInfo.SecretAccessKey) == "" && strings.TrimSpace(keyInfo.SecretKey) == "" {
-		err := fmt.Errorf("garage create key response did not include secret access key")
-		if statusErr := r.updateKeyStatusCondition(ctx, key, "CreateFailed", err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
-		}
-		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
 
 	if err := updateKeyPermissions(ctx, garageClient, bucketID, accessKeyID, key.Spec.BucketPermissions, storagev1alpha1.BucketPermissions{}); err != nil {
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "CreateFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
+		log.Error(
+			err,
+			"Could not apply desired bucket permissions to Garage key",
+			"namespace", key.Namespace,
+			"name", key.Name,
+			"bucketID", bucketID,
+			"accessKeyID", accessKeyID,
+		)
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
+	log.V(1).Info(
+		"Applied desired bucket permissions to Garage key",
+		"namespace", key.Namespace,
+		"name", key.Name,
+		"bucketID", bucketID,
+		"accessKeyID", accessKeyID,
+	)
 
-	secret := buildSecretFromKey(key, keyInfo, storeURL)
-	if secret == nil {
-		err := fmt.Errorf("could not build credentials Secret")
+	secret, err := buildSecretFromKey(key, keyInfo, zone, s3EndpointURL, key.Spec.BucketRef.Name)
+	if err != nil {
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "SecretCreationFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
+		log.Error(
+			err,
+			"Could not build credentials Secret from Garage create key response",
+			"namespace", key.Namespace,
+			"name", key.Name,
+			"secretField", secretAccessKeyField,
+			"keyInfo", keyInfoForLog(keyInfo),
+		)
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
 	if err := controllerutil.SetControllerReference(key, secret, r.Scheme); err != nil {
@@ -214,13 +251,14 @@ func (r *GarageKeyReconciler) reconcileCreate(
 	before := key.DeepCopy()
 	now := metav1.Now()
 	key.Status.AccessKeyID = accessKeyID
+	key.Status.ObservedGeneration = key.GetGeneration()
 	key.Status.LastSyncTime = &now
 	meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{
 		Type:               readyConditionType,
 		Status:             metav1.ConditionTrue,
 		Reason:             "KeyCreated",
 		Message:            "Garage key created",
-		ObservedGeneration: key.GetGeneration(),
+		ObservedGeneration: key.Status.ObservedGeneration,
 		LastTransitionTime: now,
 	})
 	if err := r.Status().Patch(ctx, key, client.MergeFrom(before)); err != nil {
@@ -229,79 +267,102 @@ func (r *GarageKeyReconciler) reconcileCreate(
 
 	r.Recorder.Eventf(key, nil, corev1.EventTypeNormal, "KeyCreated", "CreateKey", "Garage key created with access key id %s", accessKeyID)
 	log.Info("Created Garage key", "namespace", key.Namespace, "name", key.Name, "accessKeyID", accessKeyID)
-	return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
+	if specChanged {
+		return ctrl.Result{}, nil
+	}
+	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }
 
 func (r *GarageKeyReconciler) reconcileUpdate(
 	ctx context.Context,
 	key *storagev1alpha1.GarageKey,
-	bucket *storagev1alpha1.GarageBucket,
-	bucketID string,
-	storeURL string,
-	garageClient *garage.GarageAdminClient,
+	zone string,
+	s3EndpointURL string,
+	refreshInterval time.Duration,
+	specChanged bool,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	keyInfo, err := garageClient.GetKeyInfo(ctx, key.Status.AccessKeyID)
+	accessKeyID := strings.TrimSpace(key.Status.AccessKeyID)
+	if accessKeyID == "" {
+		err := fmt.Errorf("status.accessKeyId is required")
+		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
+	}
+
+	secret, secretExists, err := r.getCredentialsSecret(ctx, key)
 	if err != nil {
 		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
-		log.Error(err, "Could not get Garage key info", "namespace", key.Namespace, "name", key.Name, "accessKeyID", key.Status.AccessKeyID)
 		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 	}
 
-	if strings.TrimSpace(keyInfo.AccessKeyID) == "" {
-		keyInfo.AccessKeyID = strings.TrimSpace(key.Status.AccessKeyID)
+	if secretExists {
+		if err := ensureSecretHasAllFields(
+			ctx,
+			r.Client,
+			secret,
+			zone,
+			s3EndpointURL,
+			key.Status.AccessKeyID,
+			key.Status.SecretAccessKey,
+			key.Spec.BucketRef.Name,
+		); err != nil {
+			if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			log.Error(err, "Could not migrate credentials Secret fields", "namespace", key.Namespace, "name", key.Name, "secretName", computeSecretName(key))
+			return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
+		}
 	}
 
-	if strings.TrimSpace(keyInfo.SecretAccessKey) == "" && strings.TrimSpace(keyInfo.SecretKey) == "" {
-		err := fmt.Errorf("secret access key unavailable for credentials Secret sync")
-		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
+	if !secretExists {
+		if strings.TrimSpace(key.Status.SecretAccessKey) == "" {
+			err := fmt.Errorf("garage key exists but status.secretAccessKey is empty")
+			if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			log.Error(err, "Could not recover credentials Secret from status", "namespace", key.Namespace, "name", key.Name, "accessKeyID", accessKeyID)
+			return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 		}
-		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
-	}
 
-	currentPerms := extractCurrentBucketPermissions(keyInfo, bucketID, bucket.Name)
-	if err := updateKeyPermissions(ctx, garageClient, bucketID, key.Status.AccessKeyID, key.Spec.BucketPermissions, currentPerms); err != nil {
-		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
+		secret, buildErr := buildSecretFromStatus(key, zone, s3EndpointURL, key.Spec.BucketRef.Name)
+		if buildErr != nil {
+			if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", buildErr.Error()); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 		}
-		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
-	}
+		if err := controllerutil.SetControllerReference(key, secret, r.Scheme); err != nil {
+			if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
+		}
 
-	secret := buildSecretFromKey(key, keyInfo, storeURL)
-	if secret == nil {
-		err := fmt.Errorf("could not build credentials Secret")
-		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
+		if err := r.applyCredentialsSecret(ctx, secret); err != nil {
+			if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
 		}
-		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
-	}
-	if err := controllerutil.SetControllerReference(key, secret, r.Scheme); err != nil {
-		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
-		}
-		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
-	}
 
-	if err := r.applyCredentialsSecret(ctx, secret); err != nil {
-		if statusErr := r.updateKeyStatusCondition(ctx, key, "UpdateFailed", err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
-		}
-		return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
+		log.Info("Recovered credentials Secret from GarageKey status", "namespace", key.Namespace, "name", key.Name, "secretName", secret.Name)
 	}
 
 	before := key.DeepCopy()
 	now := metav1.Now()
+	key.Status.ObservedGeneration = key.GetGeneration()
 	key.Status.LastSyncTime = &now
 	meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{
 		Type:               readyConditionType,
 		Status:             metav1.ConditionTrue,
 		Reason:             "KeyReady",
 		Message:            "Garage key is in desired state",
-		ObservedGeneration: key.GetGeneration(),
+		ObservedGeneration: key.Status.ObservedGeneration,
 		LastTransitionTime: now,
 	})
 	if err := r.Status().Patch(ctx, key, client.MergeFrom(before)); err != nil {
@@ -309,8 +370,11 @@ func (r *GarageKeyReconciler) reconcileUpdate(
 	}
 
 	r.Recorder.Eventf(key, nil, corev1.EventTypeNormal, "KeyReady", "SyncKey", "Garage key is in desired state")
-	log.Info("Reconciled Garage key", "namespace", key.Namespace, "name", key.Name, "accessKeyID", key.Status.AccessKeyID)
-	return ctrl.Result{RequeueAfter: keyRequeueDelay}, nil
+	log.Info("Reconciled Garage key", "namespace", key.Namespace, "name", key.Name, "accessKeyID", accessKeyID)
+	if specChanged {
+		return ctrl.Result{}, nil
+	}
+	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }
 
 func (r *GarageKeyReconciler) reconcileDelete(
@@ -333,6 +397,14 @@ func (r *GarageKeyReconciler) reconcileDelete(
 		}
 	}
 
+	if strings.TrimSpace(key.Status.SecretAccessKey) != "" {
+		beforeStatus := key.DeepCopy()
+		key.Status.SecretAccessKey = ""
+		if err := r.Status().Patch(ctx, key, client.MergeFrom(beforeStatus)); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	before := key.DeepCopy()
 	controllerutil.RemoveFinalizer(key, garageKeyFinalizer)
 	if err := r.Patch(ctx, key, client.MergeFrom(before)); err != nil {
@@ -350,9 +422,16 @@ func (r *GarageKeyReconciler) resolveBucket(
 	if bucketName == "" {
 		return nil, "", fmt.Errorf("spec.bucketRef.name is required")
 	}
+	bucketNamespace := key.Namespace
+	if key.Spec.BucketRef.Namespace != nil {
+		bucketNamespace = strings.TrimSpace(*key.Spec.BucketRef.Namespace)
+		if bucketNamespace == "" {
+			return nil, "", fmt.Errorf("spec.bucketRef.namespace cannot be empty")
+		}
+	}
 
 	bucket := &storagev1alpha1.GarageBucket{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: key.Namespace, Name: bucketName}, bucket); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: bucketNamespace, Name: bucketName}, bucket); err != nil {
 		return nil, "", err
 	}
 
@@ -380,43 +459,69 @@ func (r *GarageKeyReconciler) applyCredentialsSecret(
 	return nil
 }
 
-func (r *GarageKeyReconciler) persistAccessKeyID(
+func (r *GarageKeyReconciler) getCredentialsSecret(
+	ctx context.Context,
+	key *storagev1alpha1.GarageKey,
+) (*corev1.Secret, bool, error) {
+	secret := &corev1.Secret{}
+	secretKey := types.NamespacedName{Namespace: key.Namespace, Name: computeSecretName(key)}
+	if err := r.Get(ctx, secretKey, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	return secret, true, nil
+}
+
+func (r *GarageKeyReconciler) persistKeyCredentials(
 	ctx context.Context,
 	key *storagev1alpha1.GarageKey,
 	accessKeyID string,
+	secretAccessKey string,
 ) error {
-	if strings.TrimSpace(accessKeyID) == "" || key.Status.AccessKeyID == accessKeyID {
+	accessKeyID = strings.TrimSpace(accessKeyID)
+	secretAccessKey = strings.TrimSpace(secretAccessKey)
+	if accessKeyID == "" || secretAccessKey == "" {
+		return fmt.Errorf("access key id and secret access key are required")
+	}
+	if key.Status.AccessKeyID == accessKeyID && key.Status.SecretAccessKey == secretAccessKey {
 		return nil
 	}
 
 	before := key.DeepCopy()
 	key.Status.AccessKeyID = accessKeyID
+	key.Status.SecretAccessKey = secretAccessKey
 	return r.Status().Patch(ctx, key, client.MergeFrom(before))
 }
 
-func (r *GarageKeyReconciler) resolveStoreReadinessAndURL(
+func (r *GarageKeyReconciler) resolveStoreReadinessAndS3Config(
 	ctx context.Context,
 	namespace string,
-	storeRef *storagev1alpha1.GarageStoreReference,
-) (bool, string, error) {
-	if storeRef == nil || strings.TrimSpace(storeRef.Name) == "" {
-		return false, "", fmt.Errorf("store reference is required")
+	storeRef *storagev1alpha1.GarageStoreRef,
+) (bool, string, string, error) {
+	storeName, storeKind, storeNamespace, err := resolveGarageStoreRef(storeRef, namespace)
+	if err != nil {
+		return false, "", "", fmt.Errorf("invalid store reference: %w", err)
 	}
 
-	storeName := strings.TrimSpace(storeRef.Name)
-	nsStore := &storagev1alpha1.GarageStore{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: storeName}, nsStore); err == nil {
-		return nsStore.Status.Ready, nsStore.Spec.AdminURL, nil
-	} else if !apierrors.IsNotFound(err) {
-		return false, "", err
+	switch storeKind {
+	case storagev1alpha1.GarageStoreRefKindGarageStore:
+		nsStore := &storagev1alpha1.GarageStore{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: storeNamespace, Name: storeName}, nsStore); err != nil {
+			return false, "", "", err
+		}
+		return nsStore.Status.Ready, nsStore.Spec.Zone, nsStore.Spec.S3EndpointURL, nil
+	case storagev1alpha1.GarageStoreRefKindGarageClusterStore:
+		clusterStore := &storagev1alpha1.GarageClusterStore{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: storeNamespace, Name: storeName}, clusterStore); err != nil {
+			return false, "", "", err
+		}
+		return clusterStore.Status.Ready, clusterStore.Spec.Zone, clusterStore.Spec.S3EndpointURL, nil
+	default:
+		return false, "", "", fmt.Errorf("unsupported store reference kind %q", storeKind)
 	}
-
-	clusterStore := &storagev1alpha1.GarageClusterStore{}
-	if err := r.Get(ctx, client.ObjectKey{Name: storeName}, clusterStore); err != nil {
-		return false, "", err
-	}
-
-	return clusterStore.Status.Ready, clusterStore.Spec.AdminURL, nil
 }
 
 func (r *GarageKeyReconciler) updateKeyStatusCondition(
@@ -436,45 +541,31 @@ func (r *GarageKeyReconciler) updateKeyStatusCondition(
 		ObservedGeneration: key.GetGeneration(),
 		LastTransitionTime: now,
 	})
+	key.Status.ObservedGeneration = key.GetGeneration()
 
 	return r.Status().Patch(ctx, key, client.MergeFrom(before))
 }
 
-func extractCurrentBucketPermissions(
-	keyInfo *garage.KeyInfo,
-	bucketID string,
-	bucketName string,
-) storagev1alpha1.BucketPermissions {
+func keyInfoForLog(keyInfo *garage.KeyInfo) map[string]any {
 	if keyInfo == nil {
-		return storagev1alpha1.BucketPermissions{}
+		return nil
 	}
 
-	for _, lookup := range []string{bucketID, bucketName} {
-		if lookup == "" {
-			continue
-		}
-		if keyInfo.BucketPerms != nil {
-			if perms, ok := keyInfo.BucketPerms[lookup]; ok {
-				return storagev1alpha1.BucketPermissions{Read: perms.Read, Write: perms.Write, Owner: perms.Owner}
-			}
-		}
-		if keyInfo.Permissions != nil {
-			if perms, ok := keyInfo.Permissions[lookup]; ok {
-				return storagev1alpha1.BucketPermissions{Read: perms.Read, Write: perms.Write, Owner: perms.Owner}
-			}
-		}
-		if keyInfo.Buckets != nil {
-			if bucketPerms, ok := keyInfo.Buckets[lookup]; ok {
-				perms := bucketPerms.Permissions
-				read := perms.Read || bucketPerms.Read
-				write := perms.Write || bucketPerms.Write
-				owner := perms.Owner || bucketPerms.Owner
-				return storagev1alpha1.BucketPermissions{Read: read, Write: write, Owner: owner}
-			}
-		}
+	return map[string]any{
+		"id":                     keyInfo.ID,
+		"name":                   keyInfo.Name,
+		"accessKeyID":            keyInfo.AccessKeyID,
+		"secretAccessKeyField":   keyInfo.SecretAccessKeyField(),
+		"secretAccessKeyPresent": keyInfo.GetSecretAccessKey() != "",
+		"metadata":               keyInfo.Metadata,
+		"bucketPerms":            keyInfo.BucketPerms,
+		"permissions":            keyInfo.Permissions,
+		"buckets":                keyInfo.Buckets,
+		"createdAt":              keyInfo.CreatedAt,
+		"created":                keyInfo.Created,
+		"expiration":             keyInfo.Expiration,
+		"expired":                keyInfo.Expired,
 	}
-
-	return storagev1alpha1.BucketPermissions{}
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -508,6 +599,14 @@ func (r *GarageKeyReconciler) mapBucketToKeys(ctx context.Context, obj client.Ob
 	for i := range keyList.Items {
 		item := &keyList.Items[i]
 		if item.Spec.BucketRef.Name != bucket.Name {
+			continue
+		}
+		if item.Spec.BucketRef.Namespace != nil {
+			refNS := strings.TrimSpace(*item.Spec.BucketRef.Namespace)
+			if refNS == "" || refNS != bucket.Namespace {
+				continue
+			}
+		} else if item.Namespace != bucket.Namespace {
 			continue
 		}
 		requests = append(requests, reconcile.Request{

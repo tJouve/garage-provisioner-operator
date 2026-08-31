@@ -41,23 +41,30 @@ metadata:
   namespace: storage
 spec:
   adminURL: http://admin.garage.smokingcat.net:3903
-  adminToken:
+  zone: garage
+  s3EndpointURL: http://s3.garage.smokingcat.net
+  adminSecretRef:
     name: garage-admin-secret
-    # Note: token Secret must exist in operators namespace
+    namespace: storage  # Optional; defaults to GarageStore namespace
+  refreshInterval: "24h"  # Optional; defaults to 24h
 ```
 
-**Option B: Cluster-scoped GarageClusterStore** (shared, single admin token)
+**Option B: Namespaced GarageClusterStore** (shared by reference, single admin token)
 
 ```yaml
 apiVersion: smokingcat.net/v1alpha1
 kind: GarageClusterStore
 metadata:
   name: production
+  namespace: operators
 spec:
   adminURL: http://admin.garage.smokingcat.net:3903
-  adminToken:
+  zone: garage
+  s3EndpointURL: http://s3.garage.smokingcat.net
+  adminSecretRef:
     name: garage-admin-secret
-    # Note: token Secret must exist in operators namespace
+    namespace: operators  # Optional; defaults to GarageClusterStore namespace
+  refreshInterval: "24h"  # Optional; defaults to 24h
 ```
 
 Apply and verify Ready:
@@ -77,11 +84,14 @@ metadata:
   name: app-data
   namespace: storage
 spec:
-  clusterRef:
-    name: production  # Points to GarageStore in same namespace
+  garageStoreRef:
+    name: production
+    kind: GarageStore
+    namespace: storage  # Optional; defaults to bucket namespace for GarageStore
   globalAlias: app-data-bucket
   quotas:
     maxSize: 1099511627776  # 1 TB
+  refreshInterval: "24h"  # Optional; defaults to 24h
 ```
 
 Verify:
@@ -104,10 +114,12 @@ metadata:
 spec:
   bucketRef:
     name: app-data
+    namespace: storage  # Optional; defaults to GarageKey namespace
   bucketPermissions:
     read: true
     write: true
     owner: false
+  refreshInterval: "24h"  # Optional; defaults to 24h
 ```
 
 Verify:
@@ -119,11 +131,10 @@ kubectl get secret app-writer-credentials -n storage -o yaml
 
 Credentials Secret contains:
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_S3_ENDPOINT`
-- `AWS_REGION`
-- `bucket_name`
+- `zone`
+- `s3_endpoint_url`
+- `access_key_id`
+- `secret_access_key`
 
 Use in Deployment:
 
@@ -136,12 +147,22 @@ spec:
       valueFrom:
         secretKeyRef:
           name: app-writer-credentials
-          key: AWS_ACCESS_KEY_ID
+          key: access_key_id
     - name: AWS_SECRET_ACCESS_KEY
       valueFrom:
         secretKeyRef:
           name: app-writer-credentials
-          key: AWS_SECRET_ACCESS_KEY
+          key: secret_access_key
+    - name: AWS_REGION
+      valueFrom:
+        secretKeyRef:
+          name: app-writer-credentials
+          key: zone
+    - name: AWS_ENDPOINT_URL_S3
+      valueFrom:
+        secretKeyRef:
+          name: app-writer-credentials
+          key: s3_endpoint_url
 ```
 
 ## Security Model

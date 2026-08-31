@@ -201,6 +201,7 @@ kubectl logs -n <project>-system deployment/<project>-controller-manager -c mana
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 ```
+keep both events.k8s.io and "" apiGroup for events to support both K8s 1.22+ and older versions.
 
 **Implementation rules:**
 - **Idempotent reconciliation**: Safe to run multiple times

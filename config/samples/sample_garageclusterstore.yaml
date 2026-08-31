@@ -5,8 +5,12 @@ metadata:
     app.kubernetes.io/name: garage-provisioner-operator
     app.kubernetes.io/managed-by: kustomize
   name: garageclusterstore-sample
+  namespace: operators
 spec:
-  adminURL: https://garage.example.com:3903
-  adminToken:
+  adminURL: http://admin.garage.example.org:3903
+  zone: garage
+  s3EndpointURL: http://garage.example.org:3900
+  adminSecretRef:
     name: garage-admin-secret
-    key: token
+    namespace: operators
+  refreshInterval: "24h"

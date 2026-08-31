@@ -39,18 +39,6 @@ spec:
           spec:
             description: spec defines the desired state of GarageBucket
             properties:
-              clusterRef:
-                description: clusterRef references a GarageClusterStore or GarageStore
-                  object.
-                properties:
-                  name:
-                    description: name references a GarageClusterStore or GarageStore
-                      object.
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
               deletionPolicy:
                 default: Delete
                 description: deletionPolicy controls external resource deletion when
@@ -59,6 +47,29 @@ spec:
                 - Delete
                 - Retain
                 type: string
+              garageStoreRef:
+                description: garageStoreRef references a GarageStore or GarageClusterStore
+                  object.
+                properties:
+                  kind:
+                    description: kind selects which store resource to resolve.
+                    enum:
+                    - GarageStore
+                    - GarageClusterStore
+                    type: string
+                  name:
+                    description: name references a GarageStore or GarageClusterStore
+                      object.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace overrides the lookup namespace.
+                    minLength: 1
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
               globalAlias:
                 description: globalAlias sets an optional alias for the bucket.
                 minLength: 1
@@ -77,8 +88,13 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
+              refreshInterval:
+                default: 24h
+                description: refreshInterval defines how often to reconcile this resource.
+                format: duration
+                type: string
             required:
-            - clusterRef
+            - garageStoreRef
             type: object
           status:
             description: status defines the observed state of GarageBucket
@@ -151,6 +167,11 @@ spec:
                 description: lastSyncTime is the last successful reconciliation timestamp.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: observedGeneration reflects the generation of the spec
+                  that was most recently observed.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

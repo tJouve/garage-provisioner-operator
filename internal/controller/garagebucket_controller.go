@@ -37,8 +37,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	storagev1alpha1 "github.com/deuxfleurs-org/garage-provisioner-operator/api/v1alpha1"
-	"github.com/deuxfleurs-org/garage-provisioner-operator/internal/garage"
+	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
+	"github.com/tJouve/garage-provisioner-operator/internal/garage"
 )
 
 // GarageBucketReconciler reconciles a GarageBucket object.
@@ -72,6 +72,8 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		return ctrl.Result{}, err
 	}
+	specChanged := bucket.GetGeneration() != bucket.Status.ObservedGeneration
+	refreshInterval := getRefreshInterval(bucket.Spec.RefreshInterval)
 
 	storeReady, err := r.isStoreReady(ctx, bucket)
 	if err != nil {
@@ -87,12 +89,12 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if statusErr := r.updateBucketStatusCondition(ctx, bucket, "StoreNotReady", message); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
-		log.Info("Referenced store is not ready", "namespace", bucket.Namespace, "name", bucket.Name, "storeRef", bucket.Spec.ClusterRef.Name)
+		log.Info("Referenced store is not ready", "namespace", bucket.Namespace, "name", bucket.Name, "storeRef", bucket.Spec.GarageStoreRef.Name)
 		r.Recorder.Eventf(bucket, nil, corev1.EventTypeWarning, "StoreNotReady", "StoreReady", "%s", message)
 		return ctrl.Result{RequeueAfter: bucketRequeueDelay}, nil
 	}
 
-	garageClient, err := LoadGarageClientFromStore(ctx, r.Client, &bucket.Spec.ClusterRef, bucket.Namespace)
+	garageClient, err := LoadGarageClientFromStore(ctx, r.Client, &bucket.Spec.GarageStoreRef, bucket.Namespace)
 	if err != nil {
 		if statusErr := r.updateBucketStatusCondition(ctx, bucket, "UpdateFailed", err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -115,16 +117,18 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if strings.TrimSpace(bucket.Status.BucketID) == "" {
-		return r.reconcileCreate(ctx, bucket, garageClient)
+		return r.reconcileCreate(ctx, bucket, garageClient, refreshInterval, specChanged)
 	}
 
-	return r.reconcileUpdate(ctx, bucket, garageClient)
+	return r.reconcileUpdate(ctx, bucket, garageClient, refreshInterval, specChanged)
 }
 
 func (r *GarageBucketReconciler) reconcileCreate(
 	ctx context.Context,
 	bucket *storagev1alpha1.GarageBucket,
 	garageClient *garage.GarageAdminClient,
+	refreshInterval time.Duration,
+	specChanged bool,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -171,13 +175,14 @@ func (r *GarageBucketReconciler) reconcileCreate(
 	before := bucket.DeepCopy()
 	now := metav1.Now()
 	bucket.Status.BucketID = bucketID
+	bucket.Status.ObservedGeneration = bucket.GetGeneration()
 	bucket.Status.LastSyncTime = &now
 	meta.SetStatusCondition(&bucket.Status.Conditions, metav1.Condition{
 		Type:               readyConditionType,
 		Status:             metav1.ConditionTrue,
 		Reason:             "BucketCreated",
 		Message:            "Garage bucket created",
-		ObservedGeneration: bucket.GetGeneration(),
+		ObservedGeneration: bucket.Status.ObservedGeneration,
 		LastTransitionTime: now,
 	})
 	if err := r.Status().Patch(ctx, bucket, client.MergeFrom(before)); err != nil {
@@ -186,13 +191,18 @@ func (r *GarageBucketReconciler) reconcileCreate(
 
 	r.Recorder.Eventf(bucket, nil, corev1.EventTypeNormal, "BucketCreated", "CreateBucket", "Garage bucket created with id %s", bucketID)
 	log.Info("Created Garage bucket", "namespace", bucket.Namespace, "name", bucket.Name, "bucketID", bucketID)
-	return ctrl.Result{RequeueAfter: bucketRequeueDelay}, nil
+	if specChanged {
+		return ctrl.Result{}, nil
+	}
+	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }
 
 func (r *GarageBucketReconciler) reconcileUpdate(
 	ctx context.Context,
 	bucket *storagev1alpha1.GarageBucket,
 	garageClient *garage.GarageAdminClient,
+	refreshInterval time.Duration,
+	specChanged bool,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -229,13 +239,14 @@ func (r *GarageBucketReconciler) reconcileUpdate(
 
 	before := bucket.DeepCopy()
 	now := metav1.Now()
+	bucket.Status.ObservedGeneration = bucket.GetGeneration()
 	bucket.Status.LastSyncTime = &now
 	meta.SetStatusCondition(&bucket.Status.Conditions, metav1.Condition{
 		Type:               readyConditionType,
 		Status:             metav1.ConditionTrue,
 		Reason:             "BucketReady",
 		Message:            "Garage bucket is in desired state",
-		ObservedGeneration: bucket.GetGeneration(),
+		ObservedGeneration: bucket.Status.ObservedGeneration,
 		LastTransitionTime: now,
 	})
 	if err := r.Status().Patch(ctx, bucket, client.MergeFrom(before)); err != nil {
@@ -244,7 +255,10 @@ func (r *GarageBucketReconciler) reconcileUpdate(
 
 	log.Info("Reconciled Garage bucket", "namespace", bucket.Namespace, "name", bucket.Name, "bucketID", bucket.Status.BucketID, "updated", needsUpdate)
 	r.Recorder.Eventf(bucket, nil, corev1.EventTypeNormal, "BucketReady", "SyncBucket", "Garage bucket is in desired state")
-	return ctrl.Result{RequeueAfter: bucketRequeueDelay}, nil
+	if specChanged {
+		return ctrl.Result{}, nil
+	}
+	return ctrl.Result{RequeueAfter: refreshInterval}, nil
 }
 
 func (r *GarageBucketReconciler) reconcileDelete(
@@ -309,26 +323,27 @@ func (r *GarageBucketReconciler) reconcileDelete(
 }
 
 func (r *GarageBucketReconciler) isStoreReady(ctx context.Context, bucket *storagev1alpha1.GarageBucket) (bool, error) {
-	storeName := strings.TrimSpace(bucket.Spec.ClusterRef.Name)
-	if storeName == "" {
-		return false, fmt.Errorf("spec.clusterRef.name is required")
+	storeName, storeKind, storeNamespace, err := resolveGarageStoreRef(&bucket.Spec.GarageStoreRef, bucket.Namespace)
+	if err != nil {
+		return false, fmt.Errorf("invalid spec.garageStoreRef: %w", err)
 	}
 
-	nsStore := &storagev1alpha1.GarageStore{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: bucket.Namespace, Name: storeName}, nsStore)
-	if err == nil {
+	switch storeKind {
+	case storagev1alpha1.GarageStoreRefKindGarageStore:
+		nsStore := &storagev1alpha1.GarageStore{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: storeNamespace, Name: storeName}, nsStore); err != nil {
+			return false, fmt.Errorf("could not get GarageStore %s/%s: %w", storeNamespace, storeName, err)
+		}
 		return nsStore.Status.Ready, nil
+	case storagev1alpha1.GarageStoreRefKindGarageClusterStore:
+		clusterStore := &storagev1alpha1.GarageClusterStore{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: storeNamespace, Name: storeName}, clusterStore); err != nil {
+			return false, fmt.Errorf("could not get GarageClusterStore %s/%s: %w", storeNamespace, storeName, err)
+		}
+		return clusterStore.Status.Ready, nil
+	default:
+		return false, fmt.Errorf("unsupported store reference kind %q", storeKind)
 	}
-	if err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("could not get GarageStore %s/%s: %w", bucket.Namespace, storeName, err)
-	}
-
-	clusterStore := &storagev1alpha1.GarageClusterStore{}
-	if err := r.Get(ctx, client.ObjectKey{Name: storeName}, clusterStore); err != nil {
-		return false, fmt.Errorf("could not get GarageClusterStore %s: %w", storeName, err)
-	}
-
-	return clusterStore.Status.Ready, nil
 }
 
 func (r *GarageBucketReconciler) updateBucketStatusCondition(
@@ -348,6 +363,7 @@ func (r *GarageBucketReconciler) updateBucketStatusCondition(
 		ObservedGeneration: bucket.GetGeneration(),
 		LastTransitionTime: now,
 	})
+	bucket.Status.ObservedGeneration = bucket.GetGeneration()
 
 	return r.Status().Patch(ctx, bucket, client.MergeFrom(before))
 }
@@ -420,14 +436,21 @@ func (r *GarageBucketReconciler) mapGarageStoreToBuckets(ctx context.Context, ob
 	}
 
 	bucketList := &storagev1alpha1.GarageBucketList{}
-	if err := r.List(ctx, bucketList, client.InNamespace(store.Namespace)); err != nil {
+	if err := r.List(ctx, bucketList); err != nil {
 		return nil
 	}
 
 	requests := make([]reconcile.Request, 0)
 	for i := range bucketList.Items {
 		bucket := &bucketList.Items[i]
-		if bucket.Spec.ClusterRef.Name != store.Name {
+		storeName, storeKind, storeNamespace, err := resolveGarageStoreRef(&bucket.Spec.GarageStoreRef, bucket.Namespace)
+		if err != nil {
+			continue
+		}
+		if storeKind != storagev1alpha1.GarageStoreRefKindGarageStore {
+			continue
+		}
+		if storeName != store.Name || storeNamespace != store.Namespace {
 			continue
 		}
 		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: bucket.Namespace, Name: bucket.Name}})
@@ -450,7 +473,14 @@ func (r *GarageBucketReconciler) mapGarageClusterStoreToBuckets(ctx context.Cont
 	requests := make([]reconcile.Request, 0)
 	for i := range bucketList.Items {
 		bucket := &bucketList.Items[i]
-		if bucket.Spec.ClusterRef.Name != store.Name {
+		storeName, storeKind, storeNamespace, err := resolveGarageStoreRef(&bucket.Spec.GarageStoreRef, bucket.Namespace)
+		if err != nil {
+			continue
+		}
+		if storeKind != storagev1alpha1.GarageStoreRefKindGarageClusterStore {
+			continue
+		}
+		if storeName != store.Name || storeNamespace != store.Namespace {
 			continue
 		}
 		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: bucket.Namespace, Name: bucket.Name}})

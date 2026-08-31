@@ -1,14 +1,16 @@
 apiVersion: smokingcat.net/v1alpha1
 kind: GarageKey
 metadata:
-  name: app-key
-  namespace: storage
+  name: bucket-sample-key
+  namespace: garage
 spec:
   bucketRef:
-    name: app-data
+    name: bucket-sample
+    namespace: garage
   bucketPermissions:
     read: true
     write: true
     owner: false
   secretRef:
-    name: app-s3-credentials
+    name: bucket-sample-s3-credentials
+  refreshInterval: "24h"

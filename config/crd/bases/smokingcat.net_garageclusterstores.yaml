@@ -12,7 +12,7 @@ spec:
     listKind: GarageClusterStoreList
     plural: garageclusterstores
     singular: garageclusterstore
-  scope: Cluster
+  scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
@@ -40,20 +40,21 @@ spec:
           spec:
             description: spec defines the desired state of GarageClusterStore
             properties:
-              adminToken:
-                description: adminToken references the Secret key containing the Garage
+              adminSecretRef:
+                description: adminSecretRef references the Secret containing the Garage
                   admin token.
                 properties:
-                  key:
-                    description: key is the Secret data key.
+                  name:
+                    description: name references a Kubernetes Secret containing Garage
+                      admin token.
                     minLength: 1
                     type: string
-                  name:
-                    description: name is the Secret name.
+                  namespace:
+                    description: namespace defaults to the namespace of the resource
+                      if omitted.
                     minLength: 1
                     type: string
                 required:
-                - key
                 - name
                 type: object
               adminURL:
@@ -61,9 +62,27 @@ spec:
                 format: uri
                 minLength: 1
                 type: string
+              refreshInterval:
+                default: 24h
+                description: refreshInterval defines how often to reconcile this resource.
+                format: duration
+                type: string
+              s3EndpointURL:
+                description: s3EndpointURL is the S3-compatible endpoint URL written
+                  to generated credentials.
+                format: uri
+                minLength: 1
+                type: string
+              zone:
+                description: zone is the S3 region/zone value written to generated
+                  application credentials.
+                minLength: 1
+                type: string
             required:
-            - adminToken
+            - adminSecretRef
             - adminURL
+            - s3EndpointURL
+            - zone
             type: object
           status:
             description: status defines the observed state of GarageClusterStore
@@ -133,6 +152,11 @@ spec:
                 description: lastValidation is the last successful validation timestamp.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: observedGeneration reflects the generation of the spec
+                  that was most recently observed.
+                format: int64
+                type: integer
               ready:
                 description: ready indicates whether admin endpoint validation succeeded.
                 type: boolean

@@ -16,29 +16,52 @@ limitations under the License.
 
 package v1alpha1
 
-// SecretKeyRef points to a key in a Kubernetes Secret.
-type SecretKeyRef struct {
-	// name is the Secret name.
+import "time"
+
+// AdminSecretRef references a Kubernetes Secret containing Garage admin token.
+type AdminSecretRef struct {
+	// name references a Kubernetes Secret containing Garage admin token.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// key is the Secret data key.
+	// namespace defaults to the namespace of the resource if omitted.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Key string `json:"key"`
+	Namespace *string `json:"namespace,omitempty"`
 }
 
-// GarageStoreReference references a Garage store object by name.
-type GarageStoreReference struct {
-	// name references a GarageClusterStore or GarageStore object.
+const (
+	DefaultRefreshInterval               = 24 * time.Hour
+	GarageStoreRefKindGarageStore        = "GarageStore"
+	GarageStoreRefKindGarageClusterStore = "GarageClusterStore"
+)
+
+// GarageStoreRef references a Garage store object.
+type GarageStoreRef struct {
+	// name references a GarageStore or GarageClusterStore object.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
+
+	// kind selects which store resource to resolve.
+	// +kubebuilder:validation:Enum=GarageStore;GarageClusterStore
+	Kind string `json:"kind"`
+
+	// namespace overrides the lookup namespace.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Namespace *string `json:"namespace,omitempty"`
 }
 
-// GarageBucketReference references a GarageBucket object by name.
-type GarageBucketReference struct {
+// BucketRef references a GarageBucket object.
+type BucketRef struct {
 	// name references a GarageBucket object.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
+
+	// namespace defaults to the namespace of the GarageKey object if omitted.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Namespace *string `json:"namespace,omitempty"`
 }
 
 // LocalSecretReference references a Secret by name in the same namespace.

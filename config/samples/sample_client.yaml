@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: s3-hello-world
+  namespace: garage
+spec:
+  restartPolicy: Never
+  containers:
+    - name: s3-upload
+      image: amazon/aws-cli:2.17.0
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: bucket-sample-s3-credentials
+              key: access_key_id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: bucket-sample-s3-credentials
+              key: secret_access_key
+        - name: S3_ENDPOINT_URL
+          valueFrom:
+            secretKeyRef:
+              name: bucket-sample-s3-credentials
+              key: s3_endpoint_url
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: bucket-sample-s3-credentials
+              key: zone
+        - name: BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: bucket-sample-s3-credentials
+              key: bucket_name
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          echo "hello world" > /tmp/hello.txt
+          aws --endpoint-url "$S3_ENDPOINT_URL" s3 cp /tmp/hello.txt "s3://$BUCKET/hello.txt"
+          aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls "s3://$BUCKET/"
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}

@@ -18,7 +18,7 @@ Each loop is **idempotent**, meaning it can run multiple times safely and conver
 Resource graph:
 
 ```text
-GarageClusterStore (cluster scope) OR GarageStore (namespace scope)
+GarageClusterStore (namespaced, globally referenceable) OR GarageStore (namespace scope)
                              |
                              v
                     GarageBucket (namespace)
@@ -33,30 +33,42 @@ GarageClusterStore (cluster scope) OR GarageStore (namespace scope)
 ### GarageClusterStore vs GarageStore
 
 - **GarageClusterStore**
-  - Cluster-scoped
+  - Namespaced (globally referenceable)
   - Reusable from many namespaces
-  - Admin token Secret must be created in the `operators` namespace (where operator deploys)
-  - GarageClusterStore references it by name only, no namespace needed
+  - `spec.adminSecretRef` defaults Secret namespace to GarageClusterStore namespace
+  - `spec.adminSecretRef.namespace` can override Secret namespace when needed
 
 - **GarageStore**
   - Namespaced
   - Intended for tenant-local credentials and isolation
+  - `spec.adminSecretRef` defaults Secret namespace to GarageStore namespace
+  - `spec.adminSecretRef.namespace` can override Secret namespace when needed
 
-Both `GarageClusterStore` and `GarageStore` read admin token via Secret reference from the `operators` namespace only.
+Both are namespaced. `GarageClusterStore` is globally referenceable; `GarageStore` is same-namespace-only.
+
+Both `GarageClusterStore` and `GarageStore` read admin token from `spec.adminSecretRef`.
 
 ### GarageBucket relationship
 
-- `GarageBucket.spec.clusterRef.name` points to:
-  - a `GarageStore` in the same namespace, or
-  - a `GarageClusterStore` with same name at cluster scope
+- `GarageBucket.spec.garageStoreRef` selects store resolution by kind:
+  - `kind: GarageStore`:
+    - defaults namespace to bucket namespace
+    - uses explicit `garageStoreRef.namespace` when provided
+  - `kind: GarageClusterStore`:
+    - defaults namespace to `operators`
+    - uses explicit `garageStoreRef.namespace` when provided
 
 Bucket reconciliation waits until referenced store reports Ready.
 
 ### GarageKey relationship
 
-- `GarageKey.spec.bucketRef.name` points to a `GarageBucket` in same namespace
+- `GarageKey.spec.bucketRef.name` points to a `GarageBucket`
+- `GarageKey.spec.bucketRef.namespace` is optional:
+  - defaults to GarageKey namespace when omitted
+  - uses explicit namespace when provided
 - Key reconciliation waits until bucket has `status.bucketId`
 - Key then resolves the bucket's store reference for Garage API access
+- On successful create/update, key reconciliation keeps `status.accessKeyId` synchronized from Garage API responses
 
 ## Reconciliation patterns
 
@@ -65,10 +77,15 @@ Bucket reconciliation waits until referenced store reports Ready.
 For both `GarageClusterStore` and `GarageStore`:
 
 1. Read `spec.adminURL`
-2. Resolve `spec.adminToken` from Secret in `operators` namespace
-3. Build Garage admin client
-4. Call Garage health endpoint
-5. Update:
+2. Read S3 credentials metadata from:
+   - `spec.zone`
+   - `spec.s3EndpointURL`
+3. Resolve `spec.adminSecretRef`:
+   - default Secret namespace = store resource namespace
+   - optional override via `spec.adminSecretRef.namespace`
+4. Build Garage admin client
+5. Call Garage health endpoint
+6. Update:
    - `status.ready`
    - `status.lastValidation`
    - Ready condition
@@ -79,6 +96,7 @@ Requeue strategy:
 
 - transient failures: ~30 seconds
 - authentication failures: longer backoff (~5 minutes)
+- success path uses `spec.refreshInterval` when set, defaulting to 24h
 
 ## 2) Bucket CRUD lifecycle
 
@@ -146,11 +164,10 @@ Generated Secret is namespaced and typed `Opaque`.
 
 Fields:
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_S3_ENDPOINT`
-- `AWS_REGION` (set to `garage`)
-- `bucket_name`
+- `zone` (from resolved store `spec.zone`)
+- `s3_endpoint_url` (from resolved store `spec.s3EndpointURL`)
+- `access_key_id` (from Garage key response)
+- `secret_access_key` (from Garage key response)
 
 Secret is created once by the operator and left unchanged if it already exists.
 
