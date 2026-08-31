@@ -232,7 +232,34 @@ func (c *GarageAdminClient) DenyBucketKey(ctx context.Context, bucketID, keyID s
 
 // Health checks Garage admin API liveness.
 func (c *GarageAdminClient) Health(ctx context.Context) error {
-	return c.doJSON(ctx, http.MethodGet, "/health", nil, nil)
+	if c.baseURL == "" || c.adminToken == "" || c.httpClient == nil {
+		return fmt.Errorf("garage client not properly initialized")
+	}
+
+	fullURL, err := c.makeRootURL("/health")
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.adminToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check returned %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // CanonicalizePermissions computes which permissions need to be granted or revoked.
@@ -348,6 +375,18 @@ func (c *GarageAdminClient) makeURL(requestPath string) (string, error) {
 	}
 
 	base.Path = path.Join(adminPath, requestPath)
+	return base.String(), nil
+}
+
+// makeRootURL constructs a URL for root-level endpoints (health, metrics)
+// without the /v2 prefix.
+func (c *GarageAdminClient) makeRootURL(requestPath string) (string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse garage admin base URL %q: %w", c.baseURL, err)
+	}
+
+	base.Path = path.Join(base.Path, requestPath)
 	return base.String(), nil
 }
 
