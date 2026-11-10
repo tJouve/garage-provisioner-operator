@@ -4,49 +4,135 @@ Kubernetes operator for provisioning and managing [Garage](https://garagehq.deux
 
 API group: `smokingcat.net/v1alpha1`
 
-## What this operator manages
+## Custom Resources
 
-This project provides 4 Custom Resources (CRDs):
+All four kinds are **namespaced**.
 
-1. **GarageClusterStore** (namespaced, globally referenceable) – shared Garage admin endpoint and credentials
-2. **GarageStore** (namespaced) – namespace-local Garage admin endpoint and credentials
-3. **GarageBucket** (namespaced) – Garage bucket lifecycle and quotas
-4. **GarageKey** (namespaced) – access key lifecycle, bucket permissions, and Kubernetes Secret sync
+| Kind | Purpose |
+| --- | --- |
+| `GarageClusterStore` | Shared Garage admin endpoint + credentials. Resolved from the operator namespace (`operators`) unless `namespace` is set on the reference. |
+| `GarageStore` | Namespace-local Garage admin endpoint + credentials. |
+| `GarageBucket` | Bucket lifecycle, global alias and quotas. |
+| `GarageKey` | Access key lifecycle, bucket permissions, and credentials Secret sync. |
 
-## Features
+### Store spec (`GarageStore` / `GarageClusterStore`)
 
-- Store health validation (`/health`) with Ready conditions
-- Bucket lifecycle management: create, update, delete
-- Bucket deletion policies:
-  - `Delete` (delete remote bucket when empty)
-  - `Retain` (keep remote bucket)
-- Key lifecycle management and permission sync (`read`, `write`, `owner`)
-- Automatic credential Secret creation/update with:
-  - `zone`
-  - `s3_endpoint_url`
-  - `access_key_id`
-  - `secret_access_key`
-- Controller status conditions and event emission for debugging
+```yaml
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageStore
+metadata:
+  name: garagestore-sample
+  namespace: garage
+spec:
+  adminURL: http://admin.garage.example.net:3903
+  zone: garage
+  s3EndpointURL: http://garage.example.net:3900
+  adminSecretRef:
+    name: garage-admin-secret
+    namespace: garage      # optional, defaults to the store namespace
+  refreshInterval: "24h"   # optional, default 24h
+```
+
+The referenced admin Secret must expose the Garage admin token under the key `token`.
+
+Status reports `ready`, `lastValidation`, `observedGeneration` and a `Ready` condition based on a
+call to the Garage admin health endpoint.
+
+### `GarageBucket`
+
+```yaml
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageBucket
+metadata:
+  name: bucket-sample
+  namespace: garage
+spec:
+  garageStoreRef:
+    name: garagestore-sample
+    kind: GarageStore            # GarageStore | GarageClusterStore
+    namespace: garage            # optional
+  globalAlias: bucket-sample     # optional
+  quotas:                        # optional
+    maxSize: 536870912000
+    maxObjects: 10000000
+  deletionPolicy: Delete         # Delete (default) | Retain
+  refreshInterval: "24h"
+```
+
+Status reports `bucketId`, `lastSyncTime`, `observedGeneration` and a `Ready` condition.
+
+With `deletionPolicy: Delete`, the finalizer keeps the resource around until the remote bucket is
+empty; the reconciler emits a `BucketNotEmpty` event and retries. With `Retain`, the remote bucket
+is left untouched.
+
+### `GarageKey`
+
+```yaml
+apiVersion: smokingcat.net/v1alpha1
+kind: GarageKey
+metadata:
+  name: bucket-sample-key
+  namespace: garage
+spec:
+  bucketRef:
+    name: bucket-sample
+    namespace: garage            # optional, defaults to the GarageKey namespace
+  bucketPermissions:
+    read: true
+    write: true
+    owner: false
+  secretRef:                     # optional, defaults to "<name>-credentials"
+    name: bucket-sample-s3-credentials
+  refreshInterval: "24h"
+```
+
+The store is resolved indirectly through the referenced `GarageBucket`. Status reports
+`accessKeyId`, `lastSyncTime`, `observedGeneration` and a `Ready` condition.
+
+#### Generated credentials Secret
+
+The Secret is owned by the `GarageKey` (garbage-collected with it) and contains:
+
+| Key | Value |
+| --- | --- |
+| `zone` | store `spec.zone` |
+| `s3_endpoint_url` | store `spec.s3EndpointURL` |
+| `access_key_id` | Garage access key id |
+| `secret_access_key` | Garage secret access key |
+| `bucket_name` | name of the referenced `GarageBucket` |
+
+Missing or empty fields are repaired on the next reconciliation.
+
+## Behaviour
+
+- Store health validation against the Garage admin API with `Ready` conditions.
+- Idempotent create/update/delete for buckets and keys, guarded by finalizers
+  (`garagebucket.smokingcat.net/finalizer`, `garagekey.smokingcat.net/finalizer`).
+- Permission sync (`read`, `write`, `owner`) between key and bucket.
+- Periodic re-reconciliation driven by `spec.refreshInterval` (default `24h`); transient failures
+  are retried after 30s and reported through conditions and Kubernetes events.
+- Secrets are read directly from the API server (client cache disabled for `Secret`).
 
 ## Quick start
 
 ### Prerequisites
 
-- Kubernetes 1.20+
-- `kubectl`
-- `kustomize` support in `kubectl` (`kubectl apply -k ...`)
-- A reachable Garage admin endpoint
+- A Kubernetes cluster and `kubectl`
+- A reachable Garage admin endpoint and admin token
+- Go and `make` to build from source
 
-### Install operator
+### Install
 
 ```bash
-kubectl apply -k config/
+make install                                   # CRDs only
+make deploy IMG=<registry>/<image>:<tag>       # CRDs + RBAC + manager
 ```
 
-If your environment uses the default Kubebuilder layout without a root `config/kustomization.yaml`, use:
+`make deploy` renders `config/default`, which deploys into the `operators` namespace with the
+`garage-provisioner-operator-` name prefix. A standalone manifest can be produced with:
 
 ```bash
-kubectl apply -k config/default
+make build-installer IMG=<registry>/<image>:<tag>   # writes dist/install.yaml
 ```
 
 ### Apply example resources
@@ -55,42 +141,71 @@ kubectl apply -k config/default
 kubectl apply -k config/samples/
 ```
 
+The samples target the `garage` namespace and expect a `garage-admin-secret` Secret with a `token`
+key. `sample_client.yaml` is an example Pod consuming the generated credentials Secret.
+
 ### Check status
 
 ```bash
-kubectl get garageclusterstores.smokingcat.net,garagestores.smokingcat.net,garagebuckets.smokingcat.net,garagekeys.smokingcat.net -A
+kubectl get garageclusterstores,garagestores,garagebuckets,garagekeys -A
 ```
 
-## Architecture (conceptual)
+## Local development
+
+```bash
+make kind-create        # Kind cluster from config/dev/kind-config.yaml
+make docker-build IMG=garage-operator:dev
+make kind-load-image
+make dev-deploy         # config/overlays/dev
+make dev-samples        # config/dev/samples
+make dev-logs
+make dev-clean
+```
+
+Run the manager against the current kubeconfig context without deploying:
+
+```bash
+make run
+```
+
+## Testing
+
+```bash
+make test        # unit + envtest suites
+make test-e2e    # e2e suite on a dedicated Kind cluster
+make lint        # golangci-lint
+```
+
+## Architecture
 
 ```text
-           +-------------------------------+
-           | Garage Admin API              |
-           | (health, buckets, keys, ACL) |
-           +---------------+---------------+
-                           ^
-                           | HTTP + Bearer token
-        +------------------+------------------+
-        | Kubernetes Operator (controller)    |
-        | - GarageClusterStore reconciler     |
-        | - GarageStore reconciler            |
-        | - GarageBucket reconciler           |
-        | - GarageKey reconciler              |
-        +------------------+------------------+
-                           |
-      +--------------------+---------------------+
-      |                                          |
-+-----v----------------+          +--------------v---------------+
-| Store CRDs           |          | Workload CRDs                |
-| - GarageClusterStore |          | - GarageBucket               |
-| - GarageStore        |          | - GarageKey                  |
-+----------------------+          +--------------+---------------+
-                                                  |
-                                                  v
-                                    +-----------------------------+
-                                    | Kubernetes Secret           |
-                                    | S3 credentials for apps     |
-                                    +-----------------------------+
+                    +--------------------------------+
+                    | Garage Admin API               |
+                    | health / buckets / keys / ACL  |
+                    +---------------+----------------+
+                                    ^
+                                    | HTTP + Bearer token
+                    +---------------+----------------+
+                    | Controller manager             |
+                    | - GarageClusterStore reconciler|
+                    | - GarageStore reconciler       |
+                    | - GarageBucket reconciler      |
+                    | - GarageKey reconciler         |
+                    +---------------+----------------+
+                                    |
+        +---------------------------+---------------------------+
+        |                                                       |
++-------v--------------+                          +-------------v----------------+
+| Store CRs            |  <---- referenced by ----| Workload CRs                 |
+| - GarageClusterStore |                          | - GarageBucket               |
+| - GarageStore        |                          | - GarageKey                  |
++----------------------+                          +-------------+----------------+
+                                                                |
+                                                                v
+                                                  +-----------------------------+
+                                                  | Secret (owned by GarageKey) |
+                                                  | S3 credentials for apps     |
+                                                  +-----------------------------+
 ```
 
 ## Documentation
@@ -98,8 +213,9 @@ kubectl get garageclusterstores.smokingcat.net,garagestores.smokingcat.net,garag
 - [Installation Guide](docs/INSTALLATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Examples](docs/EXAMPLES.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Local Development](docs/LOCAL_DEVELOPMENT.md)
 - [Development Guide](docs/DEVELOPMENT.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ## License
 

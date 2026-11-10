@@ -30,10 +30,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
@@ -353,23 +355,25 @@ func (r *GarageKeyReconciler) reconcileUpdate(
 		log.Info("Recovered credentials Secret from GarageKey status", "namespace", key.Namespace, "name", key.Name, "secretName", secret.Name)
 	}
 
-	before := key.DeepCopy()
-	now := metav1.Now()
-	key.Status.ObservedGeneration = key.GetGeneration()
-	key.Status.LastSyncTime = &now
-	meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{
-		Type:               readyConditionType,
-		Status:             metav1.ConditionTrue,
-		Reason:             "KeyReady",
-		Message:            "Garage key is in desired state",
-		ObservedGeneration: key.Status.ObservedGeneration,
-		LastTransitionTime: now,
-	})
-	if err := r.Status().Patch(ctx, key, client.MergeFrom(before)); err != nil {
-		return ctrl.Result{}, err
+	if readyConditionNeedsUpdate(key.Status.Conditions, key.Status.ObservedGeneration, key.GetGeneration(), "KeyReady", "Garage key is in desired state") {
+		before := key.DeepCopy()
+		now := metav1.Now()
+		key.Status.ObservedGeneration = key.GetGeneration()
+		key.Status.LastSyncTime = &now
+		meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{
+			Type:               readyConditionType,
+			Status:             metav1.ConditionTrue,
+			Reason:             "KeyReady",
+			Message:            "Garage key is in desired state",
+			ObservedGeneration: key.Status.ObservedGeneration,
+			LastTransitionTime: now,
+		})
+		if err := r.Status().Patch(ctx, key, client.MergeFrom(before)); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Eventf(key, nil, corev1.EventTypeNormal, "KeyReady", "SyncKey", "Garage key is in desired state")
 	}
 
-	r.Recorder.Eventf(key, nil, corev1.EventTypeNormal, "KeyReady", "SyncKey", "Garage key is in desired state")
 	log.Info("Reconciled Garage key", "namespace", key.Namespace, "name", key.Name, "accessKeyID", accessKeyID)
 	if specChanged {
 		return ctrl.Result{}, nil
@@ -575,7 +579,7 @@ func (r *GarageKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&storagev1alpha1.GarageKey{}).
+		For(&storagev1alpha1.GarageKey{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
 			&storagev1alpha1.GarageBucket{},
 			handler.EnqueueRequestsFromMapFunc(r.mapBucketToKeys),

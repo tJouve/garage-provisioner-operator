@@ -31,10 +31,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	storagev1alpha1 "github.com/tJouve/garage-provisioner-operator/api/v1alpha1"
@@ -237,28 +239,37 @@ func (r *GarageBucketReconciler) reconcileUpdate(
 		}
 	}
 
-	before := bucket.DeepCopy()
-	now := metav1.Now()
-	bucket.Status.ObservedGeneration = bucket.GetGeneration()
-	bucket.Status.LastSyncTime = &now
-	meta.SetStatusCondition(&bucket.Status.Conditions, metav1.Condition{
-		Type:               readyConditionType,
-		Status:             metav1.ConditionTrue,
-		Reason:             "BucketReady",
-		Message:            "Garage bucket is in desired state",
-		ObservedGeneration: bucket.Status.ObservedGeneration,
-		LastTransitionTime: now,
-	})
-	if err := r.Status().Patch(ctx, bucket, client.MergeFrom(before)); err != nil {
-		return ctrl.Result{}, err
+	if readyConditionNeedsUpdate(bucket.Status.Conditions, bucket.Status.ObservedGeneration, bucket.GetGeneration(), "BucketReady", "Garage bucket is in desired state") {
+		before := bucket.DeepCopy()
+		now := metav1.Now()
+		bucket.Status.ObservedGeneration = bucket.GetGeneration()
+		bucket.Status.LastSyncTime = &now
+		meta.SetStatusCondition(&bucket.Status.Conditions, metav1.Condition{
+			Type:               readyConditionType,
+			Status:             metav1.ConditionTrue,
+			Reason:             "BucketReady",
+			Message:            "Garage bucket is in desired state",
+			ObservedGeneration: bucket.Status.ObservedGeneration,
+			LastTransitionTime: now,
+		})
+		if err := r.Status().Patch(ctx, bucket, client.MergeFrom(before)); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Eventf(bucket, nil, corev1.EventTypeNormal, "BucketReady", "SyncBucket", "Garage bucket is in desired state")
 	}
 
 	log.Info("Reconciled Garage bucket", "namespace", bucket.Namespace, "name", bucket.Name, "bucketID", bucket.Status.BucketID, "updated", needsUpdate)
-	r.Recorder.Eventf(bucket, nil, corev1.EventTypeNormal, "BucketReady", "SyncBucket", "Garage bucket is in desired state")
 	if specChanged {
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: refreshInterval}, nil
+}
+
+func readyConditionNeedsUpdate(conditions []metav1.Condition, observedGeneration, generation int64, reason, message string) bool {
+	condition := meta.FindStatusCondition(conditions, readyConditionType)
+	return observedGeneration != generation || condition == nil ||
+		condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != generation ||
+		condition.Reason != reason || condition.Message != message
 }
 
 func (r *GarageBucketReconciler) reconcileDelete(
@@ -416,7 +427,7 @@ func (r *GarageBucketReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&storagev1alpha1.GarageBucket{}).
+		For(&storagev1alpha1.GarageBucket{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(
 			&storagev1alpha1.GarageStore{},
 			handler.EnqueueRequestsFromMapFunc(r.mapGarageStoreToBuckets),

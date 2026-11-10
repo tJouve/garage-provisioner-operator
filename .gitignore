@@ -45,3 +45,5 @@ config/dev/docker-compose-garage.yaml
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+.history/
